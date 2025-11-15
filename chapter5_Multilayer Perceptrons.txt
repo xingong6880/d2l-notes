@@ -1,0 +1,1016 @@
+Multilayer Perceptrons
+--------------------------------------------------------------------------------------------
+5.1 Multilayer Perceptrons
+%matplotlib inline
+import torch
+from d2l import torch as d2l
+----------------------------------------------------------------------------------------------
+5.1.1 Hidden Layers
+1. 线性模型的局限性
+- 强加了单调性假设。
+  - 示例：预测健康与体温的关系，高于 37C 和低于 37C 风险都增大，线性模型无法直接处理这种非单调关系。
+- 无法捕捉特征间的复杂非线性交互。
+  - 示例：图像识别中，一个像素的重要性取决于周围像素的上下文，线性模型仅依赖单个像素亮度，容易失败。
+
+2. 引入隐藏层（MLP）
+- 目标：克服线性模型的局限性。
+- 结构：堆叠全连接层，形成多层感知机（MLP）。
+- 层的定义：输入层不算层，MLP 的层数等于计算层数（隐藏层 + 输出层）。
+- 参数增加：单隐藏层 MLP 需跟踪 W(1), b(1) 和 W(2), b(2) 两组参数。
+
+3. 缺少非线性激活函数的问题
+- 公式（纯仿射变换）：
+  H = X * W(1) + b(1)
+  O = H * W(2) + b(2)
+- 结论：如果只有仿射变换（线性变换 + 偏置），多层堆叠没有意义。整个模型可以塌缩回一个单层线性模型。
+- 核心：我们没有获得任何额外的表达能力。
+
+4. 解决办法：非线性激活函数
+- 关键：引入非线性激活函数 sigma。
+- 常用选择：ReLU (sigma(x) = max(0, x))。
+- 带激活函数的公式：
+  H = sigma(X * W(1) + b(1))
+  O = H * W(2) + b(2)
+- 激活（Activations）：应用了 sigma() 之后的输出。
+- 结果：模型不再能塌缩成线性模型，获得了非线性表达能力。
+
+5. 通用近似器（Universal Approximators）
+- 理论：单隐藏层网络，只要有足够的隐藏单元（节点），原则上可以近似任何函数。
+- 意义：MLP 具有强大的表达能力。
+- 实践：在实际应用中，通常使用更深（而不是更宽）的网络来更紧凑地近似函数。
+----------------------------------------------------------------------------------------------
+5.1.2 Activation Functions
+
+1. ReLU (Rectified Linear Unit)
+----------------
+定义:
+    ReLU(x) = max(0, x)
+
+特点:
+    - 保留正数，负数置零
+    - 计算简单，收敛快
+    - 深度网络常用
+
+导数:
+    d/dx ReLU(x) =
+        0, x < 0
+        1, x > 0
+        未定义, x = 0
+
+问题:
+    - x < 0 时梯度为 0，可能导致神经元死亡
+
+变体:
+    pReLU(x) = max(0, x) + α * min(0, x)
+    在负半轴保留一定斜率，缓解神经元死亡问题
+
+
+2. Sigmoid
+----------------
+定义:
+    sigmoid(x) = 1 / (1 + exp(-x))
+
+特点:
+    - 输出范围 (0, 1)，可解释为概率
+    - 早期神经网络常用
+
+导数:
+    sigmoid'(x) = sigmoid(x) * (1 - sigmoid(x))
+
+问题:
+    - |x| 很大时梯度接近 0 → 梯度消失
+    - 输出非零均值，训练收敛慢
+
+
+3. Tanh (双曲正切)
+----------------
+定义:
+    tanh(x) = (1 - exp(-2x)) / (1 + exp(-2x))
+
+特点:
+    - 输出范围 (-1, 1)，比 Sigmoid 更居中
+    - 在 x ≈ 0 时近似线性
+
+导数:
+    tanh'(x) = 1 - tanh(x)^2
+
+问题:
+    - |x| 大时仍有梯度消失问题
+
+
+4. 对比总结
+----------------
+函数      | 输出范围   | 导数范围   | 优点                 | 缺点
+ReLU      | [0, ∞)     | {0, 1}     | 简单高效，收敛快     | 神经元死亡
+pReLU     | (-∞, ∞)    | {α, 1}     | 缓解死亡问题         | 需调参
+Sigmoid   | (0, 1)     | (0, 0.25)  | 概率解释             | 梯度消失，非零均值
+Tanh      | (-1, 1)    | (0, 1)     | 居中，收敛快于Sigmoid | 梯度消失
+
+x = torch.arange(-8.0, 8.0, 0.1, requires_grad=True)
+y = torch.relu(x)
+d2l.plot(x.detach(), y.detach(), 'x', 'relu(x)', figsize=(5, 2.5))
+
+y.backward(torch.ones_like(x), retain_graph=True)
+d2l.plot(x.detach(), x.grad, 'x', 'grad of relu', figsize=(5, 2.5))
+
+y = torch.sigmoid(x)
+d2l.plot(x.detach(), y.detach(), 'x', 'sigmoid(x)', figsize=(5, 2.5))
+
+# Clear out previous gradients
+x.grad.data.zero_()
+y.backward(torch.ones_like(x),retain_graph=True)
+d2l.plot(x.detach(), x.grad, 'x', 'grad of sigmoid', figsize=(5, 2.5))
+
+y = torch.tanh(x)
+d2l.plot(x.detach(), y.detach(), 'x', 'tanh(x)', figsize=(5, 2.5))
+
+# Clear out previous gradients
+x.grad.data.zero_()
+y.backward(torch.ones_like(x),retain_graph=True)
+d2l.plot(x.detach(), x.grad, 'x', 'grad of tanh', figsize=(5, 2.5))
+----------------------------------------------------------------------------------------------
+5.1.3 Summary and Discussion
+ReLU 的优势
+----------------
+- 相比 Sigmoid 和 Tanh，ReLU 在优化上更容易处理。
+- 这是过去十年深度学习复兴的重要原因之一。
+- 梯度传播更稳定，训练收敛更快。
+
+研究进展
+----------------
+- 激活函数的研究仍在持续发展。
+- 新提出的函数包括：
+  1. GELU (Gaussian Error Linear Unit)
+     定义: GELU(x) = x * Φ(x)
+     其中 Φ(x) 是标准高斯累积分布函数。
+     特点: 平滑近似 ReLU，常用于 Transformer 等模型。
+  2. Swish
+     定义: Swish(x) = x * sigmoid(βx)
+     特点: 在部分任务上优于 ReLU，梯度更平滑。
+
+总结
+----------------
+- ReLU 是深度学习优化的关键突破。
+- GELU 与 Swish 是近年来的重要改进方向。
+- 激活函数的选择会显著影响模型的训练效率与性能。
+----------------------------------------------------------------------------------------------
+5.2 Implementation of Multilayer Perceptrons
+多层感知机（MLPs）的实现并不比简单的线性模型复杂多少。关键的概念差异在于我们现在将多个层连接在一起。
+import torch
+from torch import nn
+from d2l import torch as d2l
+----------------------------------------------------------------------------------------------
+5.2.1 Implementation from Scratch
+
+# 定义一个名为 MLPScratch 的类，它“从零开始”实现一个多层感知机 (MLP)
+# 它继承自 d2l.Classifier 类，这个父类可能提供了一些便捷功能，比如训练、评估和绘图
+class MLPScratch(d2l.Classifier):#Initializing Model Parameters
+   
+    # 这是类的构造函数 (initializer)，当创建这个类的新实例时会被调用
+    # self: 指向实例本身的引用
+    # num_inputs: 输入特征的数量 (例如，对于MNIST图像，是 784)
+    # num_outputs: 输出单元的数量 (例如，对于MNIST分类，是 10)
+    # num_hiddens: 隐藏层中神经元的数量 (这是一个超参数)
+    # lr: 学习率 (learning rate)，用于梯度下降
+    # sigma: 用于权重初始化的标准差，默认值为 0.01
+    def __init__(self, num_inputs, num_outputs, num_hiddens, lr, sigma=0.01):
+        
+        # 调用父类 (d2l.Classifier) 的构造函数，这是继承中必要的步骤
+        super().__init__()
+        
+        # 这是 d2l 库中的一个便捷函数，它会自动将构造函数中收到的所有参数
+        # (如 num_inputs, lr 等) 保存为类的属性 (如 self.num_inputs, self.lr)
+        self.save_hyperparameters()
+        
+        # --- 定义第一层（输入层 -> 隐藏层）的参数 ---
+        
+        # self.W1: 隐藏层的权重矩阵
+        # torch.randn(num_inputs, num_hiddens): 创建一个形状为 (输入数, 隐藏单元数) 的张量，
+        # 其中的值是从标准正态分布 (均值为0，方差为1) 中随机抽取的。
+        # * sigma: 将这些随机值乘以 sigma，以控制权重的初始尺度。这是一种简单的权重初始化方法。
+        # nn.Parameter(...): 将这个张量包装成一个 nn.Parameter 对象。
+        # 这至关重要，因为它告诉 PyTorch：这是一个模型参数，
+        # 它需要计算梯度 (requires_grad=True)，并且应该被优化器更新。
+        self.W1 = nn.Parameter(torch.randn(num_inputs, num_hiddens) * sigma)
+        
+        # self.b1: 隐藏层的偏置 (bias) 向量
+        # torch.zeros(num_hiddens): 创建一个形状为 (隐藏单元数,) 的全零张量。
+        # 通常将偏置初始化为 0。
+        # nn.Parameter(...): 同样，将其注册为模型的可学习参数。
+        self.b1 = nn.Parameter(torch.zeros(num_hiddens))
+        
+        # --- 定义第二层（隐藏层 -> 输出层）的参数 ---
+        
+        # self.W2: 输出层的权重矩阵
+        # 它的形状是 (隐藏单元数, 输出数)
+        self.W2 = nn.Parameter(torch.randn(num_hiddens, num_outputs) * sigma)
+        
+        # self.b2: 输出层的偏置向量
+        # 它的形状是 (输出数,)
+        self.b2 = nn.Parameter(torch.zeros(num_outputs))
+
+def relu(X):#Model
+    # 1. 创建一个和输入 X 形状完全一样，但所有元素都为 0 的张量 'a'
+	a = torch.zeros_like(X) 
+    
+    # 2. 逐元素比较 X 和 a (全零张量)
+    #    并返回其中较大的那个值。
+    #    - 如果 X 中的某个元素 > 0，max(X, 0) 就返回 X 的那个元素
+    #    - 如果 X 中的某个元素 <= 0，max(X, 0) 就返回 0
+	return torch.max(X, a)
+
+@d2l.add_to_class(MLPScratch)
+def forward(self, X):#Model
+	X = X.reshape((-1, self.num_inputs))
+    # 1. 重塑 (Reshape) 输入
+    # 'self.num_inputs' 是在 __init__ 中定义的输入特征总数 (例如 28*28 = 784)
+    # 这行代码将输入 X "压平" (flatten) 成一个二维张量
+    # 形状从 (batch_size, 28, 28) 变为 (batch_size, 784)
+    # -1 会自动计算为 batch_size 的大小
+    # 这一步是必须的，因为全连接层 (matmul) 需要 2D 矩阵输入
+	H = relu(torch.matmul(X, self.W1) + self.b1)
+	return torch.matmul(H, self.W2) + self.b2
+
+if __name__ == '__main__':
+    #Training
+    model = MLPScratch(num_inputs=784, num_outputs=10, num_hiddens=256, lr=0.1)
+    data = d2l.FashionMNIST(batch_size=256)
+    trainer = d2l.Trainer(max_epochs=10)
+    trainer.fit(model, data)
+    d2l.plt.show()
+----------------------------------------------------------------------------------------------
+5.2.2 Concise Implementation
+As you might expect, by relying on the high-level APIs, we can implement MLPs even more concisely.
+
+Model
+
+class MLP(d2l.Classifier):
+    """
+    使用 PyTorch 简洁 API (nn.Sequential) 实现的多层感知机 (MLP)
+    继承自 d2l.Classifier 以便使用 d2l 的训练和绘图功能
+    """
+    def __init__(self, num_outputs, num_hiddens, lr):
+        # 构造函数，接收输出类别数、隐藏单元数和学习率
+        super().__init__()
+        
+        # 使用 d2l 辅助函数自动保存超参数
+        self.save_hyperparameters()
+        
+        # 'self.net' 是模型的核心
+        # nn.Sequential 是一个“顺序容器”，数据会按顺序流过这里定义的层
+        self.net = nn.Sequential(
+            # 1. 展平层：将 (batch, 28, 28) 的图像压平为 (batch, 784)
+            nn.Flatten(),
+            
+            # 2. 隐藏层：全连接层
+            # nn.LazyLinear 会自动推断输入维度 (784)
+            # 输出维度由 num_hiddens (例如 256) 指定
+            nn.LazyLinear(num_hiddens),
+            
+            # 3. 激活层：引入非线性
+            nn.ReLU(),
+            
+            # 4. 输出层：全连接层
+            # 自动推断输入维度 (来自上一层，即 num_hiddens)
+            # 输出维度为 num_outputs (类别数，例如 10)
+            nn.LazyLinear(num_outputs)
+        )
+        # 注意：这里不需要手动定义 W1, b1, W2, b2，nn.LazyLinear 自动处理了
+        # 也不需要手动写 forward，nn.Sequential 自动处理了
+
+#Training:
+if __name__== '__main__':
+	model = MLP(num_outputs=10, num_hiddens=256, lr=0.1)
+	trainer.fit(model, data)
+
+----------------------------------------------------------------------------------------------
+5.2.3 Summary
+(1) 从单层到多层网络的跨越现在已不成问题。特别是，我们可以重用训练算法和数据加载器 (data loader)。
+
+(2) 但是，需要注意的是，从零开始实现 MLP (多层感知机) 仍然很混乱 (messy)。
+    (I) 命名和跟踪模型参数使得扩展模型变得困难。
+    (II) 例如：想在 42 层和 43 层之间插入一个新层。它可能需要被命名为 42b 层，除非我们愿意执行顺序重命名。
+    (III) 此外，如果我们从零开始实现网络，框架 (framework) 将更难执行有意义的性能优化。
+
+(3) 尽管如此，你们现在已经达到了 20 世纪 80 年代末的先进水平 (state of the art)，当时全连接深度网络是神经网络建模的首选方法。
+
+(4) 我们的下一个概念步骤是考虑图像。在此之前，我们需要回顾一些统计基础知识，以及如何高效计算模型的细节。
+----------------------------------------------------------------------------------------------
+5.3 Forward Propagation, Backward Propagation, and Computational Graphs
+1) 现状与自动微分(I) 到目前为止，我们只关心了模型如何进行前向传播（Forward Propagation）的计算。(II) 对于训练至关重要的梯度计算，我们一直依赖深度学习框架提供的自动微分（Automatic Differentiation）功能来自动完成。
+(2) 理解反向传播的必要性(I) 自动微分极大地简化了深度学习算法的实现。在它出现之前，即使是模型的小改动也需要研究者花费大量精力去手动推导复杂的梯度更新规则。(II) 尽管我们可以依赖自动微分来专注于更有趣的部分（如模型架构设计），但如果想超越对深度学习的浅层理解，就必须搞清楚这些梯度在底层是如何通过反向传播（Backpropagation）计算出来的。
+(3) 本节的目标(I) 本节将深入探讨反向传播（Backpropagation）的实现细节。(II) 为了解释清楚，我们将使用基础数学和计算图（Computational Graphs）作为工具。(III) 我们将以一个包含权重衰减（即 L2 正则化）的**单隐藏层多层感知机（MLP）**作为起点开始分析。
+----------------------------------------------------------------------------------------------
+5.3.1 Forward Propagation
+(1) 定义 前向传播（或前向计算）指的是按顺序（从输入层到输出层）计算并存储神经网络中间变量（包括输出）的过程。
+
+(2) 单隐藏层 MLP 的计算步骤（简化版，无偏置项） (I) 输入：x (一个 d 维向量) (II) 隐藏层输入 (中间变量 z)： z = W^(1) * x (其中 W^(1) 是 h x d 维的隐藏层权重) (III) 隐藏层激活 (中间变量 h)： h = phi(z) (其中 phi 是激活函数) (IV) 输出层输出 (中间变量 o)： o = W^(2) * h (其中 W^(2) 是 q x h 维的输出层权重)
+
+目标函数 (Objective Function)
+
+(1) 损失项 (L) L = l(o, y) (其中 l 是损失函数, o 是预测输出, y 是真实标签)
+
+(2) L2 正则化项 (s) s = (lambda / 2) * (||W^(1)||_F^2 + ||W^(2)||_F^2) (I) lambda 是超参数。 (II) ||W||_F^2 是矩阵 W 的 Frobenius 范数的平方 (即矩阵所有元素的平方和)。
+
+(3) 目标函数 (J) J = L + s (J 是模型在单个数据样本上的"正则化损失"，是反向传播需要优化的最终目标)
+----------------------------------------------------------------------------------------------
+5.3.2 Computational Graph of Forward Propagation
+(1) 什么是计算图？
+计算图是一种可视化工具，它能帮我们清楚地看到一个复杂计算中，变量（Variables）和操作符（Operators）之间的依赖关系。
+
+(2) 图例（约定）
+(I) 方框 (Squares)：代表变量（数据或参数）。
+    例如：x (输入), W^(1) (权重), z (中间变量), h (隐藏层激活), o (输出), y (标签), L (损失), s (正则化项), J (最终目标)。
+(II) 圆形 (Circles)：代表操作符（计算步骤）。
+    例如：x (乘法), phi (激活函数), l (损失函数), l_2 (L2正则化), + (加法)。
+
+(3) 数据流（计算顺序）
+(I) 箭头代表数据流动的方向。
+(II) 整个计算从图的左下角（输入 x）开始。
+(III) 计算沿着箭头方向，最终汇聚到右上角（最终目标 J）。
+
+(4) 计算图分解
+这个图清晰地展示了 J = L + s 是如何被一步步计算出来的：
+
+(I) 计算 L (损失项) 的路径：
+    1.  x 和 W^(1) 作为输入，经过乘法 (x) 操作，得到 z。
+    2.  z 经过激活函数 (phi) 操作，得到 h。
+    3.  h 和 W^(2) 作为输入，经过乘法 (x) 操作，得到 o。
+    4.  o 和 y (真实标签) 作为输入，经过损失函数 (l) 操作，得到 L。
+
+(II) 计算 s (正则化项) 的路径：
+    1.  W^(1) 和 W^(2) 作为输入，经过 l_2 范数 (l_2) 操作，得到 s。
+
+(III) 计算 J (最终目标) 的路径：
+    1.  上面算出的 L 和 s 作为输入，经过加法 (+) 操作，得到最终的 J。
+----------------------------------------------------------------------------------------------
+5.3.3 Backpropagation
+(1) 核心思想 (I) 定义：反向传播是一种计算神经网络参数梯度的方法。 (II) 顺序：它按照与前向传播相反的顺序，从输出层（J）遍历网络到输入层。 (III) 工具：它依赖于微积分中的"链式法则"（Chain Rule）。 (IV) prod 运算符：这是一个广义的乘法运算符。在处理矩阵和向量时，它可能包括转置（transpose）等操作，以确保维度匹配。 (V) 链式法则 (Eq. 5.3.7)： 如果 Z=g(Y) 且 Y=f(X), 则 dZ/dX = prod(dZ/dY, dY/dX) (这里 dZ/dX 代表 Z 对 X 的偏导数)
+
+(2) 反向传播的计算步骤 我们的目标是计算总目标 J = L + s (损失 + 正则化) 对参数 W^(1) 和 W^(2) 的梯度。
+
+(I) 步骤 1：起点 (J 对 L 和 s 的梯度) (Eq. 5.3.8) dJ/dL = 1 dJ/ds = 1
+
+(II) 步骤 2：反向传播到输出 o (Eq. 5.3.9) J 只通过 L 依赖 o，所以： dJ/do = prod(dJ/dL, dL/do) = dL/do
+
+(III) 步骤 3：计算正则化项 s 的梯度 (Eq. 5.3.10) s 对 W 的梯度（即“态度扣分”的梯度）是： ds/dW^(1) = lambda * W^(1) ds/dW^(2) = lambda * W^(2)
+
+(IV) 步骤 4：计算 W^(2) 的梯度 (Eq. 5.3.11) W^(2) 通过两条路径影响 J (通过 o 的路径和通过 s 的路径)。总梯度是两条路径梯度之和： dJ/dW^(2) = prod(dJ/do, do/dW^(2)) + prod(dJ/ds, ds/dW^(2)) dJ/dW^(2) = (dJ/do) * (h^T) + (lambda * W^(2)) (h^T 代表 h 的转置)
+
+(V) 步骤 5：反向传播到隐藏层 h (Eq. 5.3.12) J 只通过 o 依赖 h。我们将 o 点的梯度 dJ/do 传播回来： dJ/dh = prod(dJ/do, do/dh) = (W^(2)^T) * (dJ/do) (W^(2)^T 代表 W^(2) 的转置)
+
+(VI) 步骤 6：反向传播到 z (激活前) (Eq. 5.3.13) 我们将在 h 点的梯度 dJ/dh 传播过激活函数 phi： dJ/dz = prod(dJ/dh, dh/dz) = (dJ/dh) * (phi'(z)) (注意：这里的 * 是逐元素乘法，因为 phi 是逐元素激活函数)
+
+(VII) 步骤 7：计算 W^(1) 的梯度 (Eq. 5.3.14) 与 W^(2) 类似，W^(1) 也通过 z 和 s 两条路径影响 J： dJ/dW^(1) = prod(dJ/dz, dz/dW^(1)) + prod(dJ/ds, ds/dW^(1)) dJ/dW^(1) = (dJ/dz) * (x^T) + (lambda * W^(1)) (x^T 代表 x 的转置)
+----------------------------------------------------------------------------------------------
+5.3.4 Training Neural Networks
+(1) 前向传播和反向传播的依赖关系 (I) 训练神经网络时，前向传播和反向传播相互依赖。 (II) 前向传播：按照计算图的依赖顺序（从前到后）计算并存储所有中间变量。 (III) 反向传播：按照计算图的相反顺序（从后到前）计算梯度。
+
+(2) 相互依赖的示例 (I) 前向依赖反向：前向传播在计算正则化项 s 时，需要使用模型参数 W^(1) 和 W^(2) 的当前值。而这些值是由上一步反向传播和优化算法更新得来的。 (II) 反向依赖前向：反向传播在计算 W^(2) 的梯度时（见 Eq. 5.3.11），需要使用隐藏层输出 h 的当前值。而这个 h 是在前向传播中计算并存储的。
+
+(3) 训练的核心循环 (I) 模型参数初始化后，训练过程就是不断交替执行以下步骤： 1. 前向传播（计算结果并存储中间变量）。 2. 反向传播（计算梯度）。 3. 参数更新（使用反向传播得到的梯度来更新模型参数）。
+
+(4) 内存消耗的关键点 (I) 重用中间值：反向传播会重用前向传播中存储的中间变量（如 h），以避免重复计算。 (II) 内存占用：这是训练（Training）比单纯预测（Inference）需要更多内存的主要原因之一。我们必须保留这些中间值，直到反向传播完成。 (III) 内存与什么相关：需要存储的中间值的大小，大致与网络层数和批量大小（batch size）成正比。 (IV) 内存溢出（OOM）：因此，训练更深的网络或使用更大的批量大小，更容易导致**内存溢出（out-of-memory）**错误。
+----------------------------------------------------------------------------------------------
+5.3.5 Summary
+(I) 前向传播 (Forward propagation)： 它按照神经网络计算图定义的顺序（从输入层到输出层），依次计算并存储中间变量。
+(II) 反向传播 (Backpropagation)： 它按照相反的顺序（从输出层到输入层），依次计算并存储中间变量和参数的梯度。
+(III) 相互关系 (Interdependence)： 在训练深度学习模型时，前向传播和反向传播是相互依赖的。
+(IV) 内存 (Memory)： 训练（Training）过程需要存储前向传播的中间结果（用于反向传播），因此比单纯的预测（Prediction）需要消耗更多的内存。
+----------------------------------------------------------------------------------------------
+5.4 Numerical Stability and Initialization
+(1) 问题的引入 (I) 到目前为止，我们都想当然地使用了模型给定的参数初始化方案（例如，nn.init.normal_），而没有深究其选择依据。 (II) 你可能会误以为这些选择不重要。
+(2) 初始化的重要性 (I) 恰恰相反：初始化方案的选择对神经网络的训练极其重要。 (II) 它可以是保持**数值稳定性（numerical stability）**的关键。
+(3) 初始化与激活函数的关系 (I) 如何选择初始化方案，与你选择哪种非线性激活函数（例如 ReLU、Sigmoid 等）密切相关。 (II) 这两者的组合（初始化方案 + 激活函数）共同决定了优化算法（如 SGD）的收敛速度。
+(4) 糟糕选择的后果 (I) 如果在初始化或激活函数上选择了糟糕的组合，会导致训练过程中出现： (I-I) 梯度爆炸（exploding gradients）：梯度变得极大，导致数值溢出。 (II-II) 梯度消失（vanishing gradients）：梯度变得极小，导致参数几乎不更新。
+(5) 本节目标 本节将深入探讨这些问题，并讨论一些在深度学习生涯中非常有用的启发式方法（heuristics）。
+%matplotlib inline
+import torch
+from d2l import torch as d2l
+----------------------------------------------------------------------------------------------
+5.4.1 Vanishing and Exploding Gradients
+(1) 问题的根源 (Eq. 5.4.2) (I) 考虑一个 L 层的深度网络，其输出 o 是 L 个函数复合的结果。 (II) 当计算 o 对第 l 层权重 W(l) 的梯度时，根据链式法则，这个梯度是 L-l 个矩阵 M(L) * ... * M(l+1) 与一个梯度向量 v(l) 的乘积。 (III) 就像多次乘以一个概率值会导致数值下溢（underflow）一样，多个矩阵的连乘也可能导致数值极其不稳定。
+
+(2) 风险 (I) 梯度的大小不可预测，会威胁优化算法的稳定性。 (II) 梯度爆炸 (Exploding Gradients)： (II-I) 梯度过大 (excessively large)。 (II-II) 参数更新过猛，可能会“摧毁”模型。 (III) 梯度消失 (Vanishing Gradients)： (III-I) 梯度过小 (excessively small)。 (III-II) 参数几乎不更新，导致学习“卡住”。
+
+梯度爆炸 (Exploding Gradients)
+
+(1) 这是一个棘手的问题。 (2) 举例：即使我们将 100 个方差 sigma^2 = 1 的高斯随机矩阵相乘，其乘积也会“爆炸”（变得极大）。 (3) 如果这种情况发生在深度网络的初始化阶段，梯度下降优化器将没有机会收敛。
+
+梯度消失 (Vanishing Gradients)
+
+(1) 常见原因 (I) 导致梯度消失的一个常见元凶是Sigmoid 激活函数 (sigma(x) = 1 / (1 + exp(-x)))。 (II) 它在历史上很流行，因为它模拟了生物神经元的“要么全有，要么全无”的阈值特性。
+
+(2) Sigmoid 的问题 (I) Sigmoid 函数的梯度（导数）在输入值很大或很小（即远离0）时，都会消失（变得接近于0）。 (II) 在多层网络中进行反向传播时，总梯度是这些小梯度的连乘。 (III) 除非输入值“幸运地”都落在接近 0 的“Goldilocks 区间”，否则多层之后总梯度会趋向于 0。
+
+(3) 后果与解决方案 (I) 这个问题曾困扰着深度网络的训练。 (II) ReLU（Rectified Linear Unit）因此成为实践者的默认选择，因为它在数值上更稳定（当输入为正时，其梯度恒为 1，不会消失）。
+
+打破对称性 (Breaking the Symmetry)
+
+(1) 神经网络中的对称性 (I) 在一个多层感知机（MLP）中，同一隐藏层中的所有单元（units）本质上是对称的（Permutation Symmetry）。 (II) 交换任意两个隐藏单元（及其对应的权重），网络的整体功能保持不变。
+
+(2) 错误初始化的后果 (I) 假设我们将一个隐藏层的所有参数初始化为同一个常数 c（例如，所有 W^(1) = c）。 (II) 前向传播：所有隐藏单元接收相同的输入，使用相同的参数，因此会产生完全相同的激活值。 (III) 反向传播：所有隐藏单元会接收到完全相同的梯度。 (IV) 更新之后：所有单元的参数值（例如 W^(1)）将仍然保持相同。
+
+(3) 结论 (I) 这种对称性永远不会被基于梯度的算法（如 SGD）自行打破。 (II) 导致的结果是，整个隐藏层（无论有多少单元）的行为就像只有一个单元一样，完全无法发挥网络的“表达能力”（expressive power）。 (III) 解决方案：必须随机初始化参数，以“打破”这种初始对称性。（注：Dropout 也能打破对称性）。
+
+x = torch.arange(-8.0, 8.0, 0.1, requires_grad=True)
+y = torch.sigmoid(x)
+y.backward(torch.ones_like(x))
+d2l.plot(x.detach().numpy(), [y.detach().numpy(), x.grad.numpy()],
+					legend=['sigmoid', 'gradient'], figsize=(4.5, 2.5))
+M = torch.normal(0, 1, size=(4, 4))
+print('a single matrix \n',M)
+for i in range(100):
+	M = M @ torch.normal(0, 1, size=(4, 4))
+print('after multiplying 100 matrices\n', M)
+----------------------------------------------------------------------------------------------
+5.4.2 参数初始化 (Parameter Initialization)
+(1) 目标 (I) 解决梯度消失和梯度爆炸问题，保持数值稳定性。 (II) 核心思想：使信息（正向传播）和梯度（反向传播）在网络中传递时，每一层输出的方差保持不变。
+
+(2) Xavier 初始化的推导（基于线性假设） (I) 假设：权重 w 和输入 x 的均值都为 0。w 的方差为 sigma^2，x 的方差为 gamma^2。
+
+(II) 正向传播的方差： (II-I) 一层 n_in 个输入的线性输出 o 的方差为： Var(o) = n_in * sigma^2 * gamma^2 (II-II) 为保持方差不变（即 Var(o) = gamma^2），需要： n_in * sigma^2 = 1
+
+(III) 反向传播的方差： (III-I) 同理，梯度从 n_out 个单元反向传播。 (III-II) 为保持梯度方差不变，需要： n_out * sigma^2 = 1
+
+(3) Xavier 的妥协方案 (I) 我们无法同时满足 n_in * sigma^2 = 1 和 n_out * sigma^2 = 1。 (II) 取两者的平均值作为条件 (Eq. 5.4.6)： 0.5 * (n_in + n_out) * sigma^2 = 1 (III) 解出权重的最佳方差 sigma^2： sigma^2 = 2 / (n_in + n_out)
+
+(4) 两种实现方式 (I) 高斯分布（Xavier Normal）： 从均值为 0、方差为 sigma^2 = 2 / (n_in + n_out) 的正态分布中采样。
+
+(II) 均匀分布（Xavier Uniform）(Eq. 5.4.7)： (II-I) 均匀分布 U(-a, a) 的方差是 a^2 / 3。 (II-II) 令 a^2 / 3 = 2 / (n_in + n_out) (II-III) 解得 a = sqrt( 6 / (n_in + n_out) ) (II-IV) 从 U(-a, a) 中采样。
+
+(5) 结论 (I) Xavier 初始化提供了一个基于统计学的方案，来设置权重的初始值，以保持网络稳定性。 (II) 尽管它是在“无激活函数”的假设下推导的，但它在实践中效果很好（尤其是对 tanh 等对称激活函数）。
+----------------------------------------------------------------------------------------------
+5.4.3 总结 (Summary)
+(1) 常见问题：梯度消失（Vanishing gradients）和梯度爆炸（exploding gradients）是深度网络中常见的问题。
+
+(2) 参数初始化： (I) 必须非常小心地进行参数初始化，以确保梯度和参数保持在可控范围内。 (II) 需要初始化“启发法”（heuristics）来确保初始梯度既不会太大，也不会太小。
+
+(3) 随机初始化： (I) 随机初始化（Random initialization）是确保在优化开始前“打破对称性”（break symmetry）的关键。
+
+(4) Xavier 初始化： (I) Xavier 初始化的核心建议是，对于每一层： (II-I) 其输出的方差不应受到输入数量的影响。 (II-II) 其梯度的方差不应受到输出数量的影响。
+
+(5) ReLU 激活函数： (I) ReLU 激活函数有助于缓解（mitigate）梯度消失问题。 (II) 这可以加速模型的收敛。
+----------------------------------------------------------------------------------------------
+5.5 Generalization in Deep Learning
+(1) 机器学习的核心追求是发现数据中的普适模式，以便对未见过的新样本做出准确的预测。这一定义了“泛化”的核心目标。
+
+(2) 在机器学习中，优化算法（如最小化训练损失）只是实现目标的手段，而不是目标本身。我们优化训练损失的最终目的是让模型能够泛化到训练集之外。
+
+(3) 实践表明，使用随机梯度下降（SGD）训练的深度神经网络在各种任务（如计算机视觉、NLP、时间序列等）上都表现出极佳的泛化能力。
+
+(4) 尽管实践效果显著，但深度学习的理论理解仍不完整，尤其是在解释“为什么模型能被成功优化”以及“为什么梯度下降学习到的模型能很好地泛化”这两个关键问题上。
+
+(5) 在实际操作中，“优化”（即找到一组参数来拟合所有训练数据）通常不是主要难题。
+
+(6) 因此，理解“泛化”（为什么模型能在新数据上表现良好）是目前深度学习理论中远为更重大的挑战。
+
+(7) 尽管缺乏统一的理论，但从业者已经开发了大量的实践技术和启发式方法，以帮助模型在实践中获得更好的泛化能力。
+----------------------------------------------------------------------------------------------
+5.5.1 Revisiting Overfitting and Regularization
+(1) 泛化与归纳偏置：“没有免费的午餐”定理指出，任何学习算法都需要依赖关于数据分布的假设，即“归纳偏置”（Inductive Biases），才能在特定任务上取得良好泛化。
+
+(2) 泛化差距与过拟合：机器学习的目标是拟合训练数据，并估计在未见数据上的“泛化误差”。训练误差与测试误差（泛化误差的估计）之间的差异被称为“泛化差距”。当这个差距很大时，我们称之为“过拟合”。
+
+(3) 经典的过拟合观点：在经典理论中，过拟合被解释为模型“过于复杂”。解决方法通常是“缩减”模型的复杂度，例如减少特征数量或参数数量。
+
+(4) 深度学习的现状：然而，深度学习（尤其是分类任务）使情况变得复杂。深度模型通常具有极强的“表现力”，足以完美拟合（达到零训练误差）所有训练样本。
+
+(5) 深度学习的悖论（一）：当所有模型都能实现零训练误差时，唯一的改进途径就是“减少过拟合”（即缩小泛化差距）。
+
+(6) 深度学习的悖论（二）：奇怪的是，即使在完美拟合训练数据之后，我们仍然可以通过使模型“更具表现力”（例如，增加层、增加节点，或训练更多轮次）来进一步“减少泛化误差”。这与经典的“缩减复杂度”观点（第3点）背道而驰。
+
+(7) 双下降（Double-Descent）：更奇怪的是，模型复杂度（如网络的深度或宽度）与泛化差距之间的关系可能是“非单调”的。有时增加复杂度起初会损害泛化，但随后（在所谓的“双下降”模式中）又会帮助泛化。
+
+(8) 经典理论的失效：传统的泛化理论（例如基于VC维或Rademacher复杂度的界限）和L2正则化等方法，似乎无法解释为什么深度神经网络（尽管它们甚至可以拟合随机标签）仍然能够很好地泛化。
+----------------------------------------------------------------------------------------------
+5.5.2 Inspiration from Nonparametrics
+(1) 深度学习的非参数视角：虽然深度神经网络拥有数百万个参数（这使其看起来像参数模型），但从某些方面将它们视为“非参数模型”可能更有助于理解。
+
+(2) 非参数模型的特点：非参数方法的一个共同主题是，模型的复杂度往往会随着可用数据量的增长而增长。
+
+(3) 举例（k-NN）：k-最近邻算法（k-NN）是一个简单的非参数模型。
+    (I) 训练时，k-NN只是“记住”整个数据集。
+    (II) 预测时，它根据某个“距离度量”（distance metric $d$）来查找k个最近的邻居。
+
+(4) 1-NN的特性：当k=1时（1-最近邻），该算法总是能达到“零训练误差”（完美拟合训练数据）。
+
+(5) 拟合与泛化：尽管1-NN完美拟合了训练数据，但这并不意味着它不能泛化。在特定条件下，1-NN是“一致的”，意味着随着数据增多，它最终会收敛到最优预测器。
+
+(6) 距离度量与归纳偏置：在k-NN中，对距离度量 $d$ 的不同选择，代表了对数据潜在模式的不同假设，即编码了不同的“归纳偏置”（Inductive Biases）。
+
+(7) 深度网络的类比：深度神经网络是“过度参数化”的（Over-parameterized），即它们拥有的参数远超拟合训练数据所需。
+
+(8) 深度网络的插值行为：因此，神经网络倾向于“插值”（interpolate）训练数据（即完美拟合它们），这种行为在某种程度上类似于1-NN等非参数模型。
+
+(9) 理论联系（NTK）：近期的理论研究（例如 Jacot et al., 2018）建立了大型神经网络与非参数“核方法”（Kernel Methods）之间的深刻联系。
+
+(10) 神经正切核（NTK）：研究表明，当具有随机初始化权重的多层感知机（MLP）变得“无限宽”时，它们在极限情况下等同于一个特定的核方法，该核被称为“神经正切核”（Neural Tangent Kernel）。
+
+(11) 总结：尽管NTK等模型可能无法完全解释现代深度网络的全部行为，但这种非参数建模的视角，为理解“过度参数化”的深度网络为何能有效泛化提供了有用的分析工具。
+----------------------------------------------------------------------------------------------
+5.5.3 Early Stopping
+(1) 深度网络在训练时，倾向于“先拟合干净的标签”，然后才“拟合错误的标签”（即标签噪声）。
+
+(2) “提前终止”（Early Stopping）是一种利用此现象的正则化技术。
+
+(3) 它的机制不是约束权重，而是约束“训练的轮次”（epochs）。
+
+(4) 常见做法是：监控训练过程中的“验证错误率”。
+
+(5) 如果验证错误率在一定的轮次（称为“耐心标准” patience criterion）内，没有减少超过某个设定的“小量”，则停止训练。
+
+(6) 提前终止对于处理“标签噪声”或高变异性数据（如预测死亡率）至关重要。
+
+(7) 它的核心目的是防止模型去“插值”（interpolate）或完美拟合那些噪声数据，因为这样做通常是糟糕的。
+
+(8) 附带的好处是，提前终止可以节省大量的训练时间、算力和成本。
+
+(9) 相比之下，如果数据集很干净（无噪声）且易于分离（如猫狗分类），提前终止对泛化能力的提升通常不明显。
+----------------------------------------------------------------------------------------------
+5.5.4 Classical Regularization Methods for Deep Networks
+(1) 经典正则化方法如“权重衰减”（Weight Decay），旨在通过向损失函数添加一个惩罚项来限制模型复杂度，以惩罚较大的权重值。
+    (I) 使用 L2 范数惩罚的称为“岭回归”（Ridge Regularization）。
+    (II) 使用 L1 范数惩罚的称为“Lasso 回归”（Lasso Regularization）。
+
+(2) 在经典分析中，这些正则化器被认为足够严格，可以阻止模型拟合任意数据（即防止过拟合）。
+
+(3) 在深度学习中，权重衰减（尤其是 L2 正则化）仍然是一个流行的工具。
+
+(4) 然而，研究表明，典型强度的 L2 正则化并“不足以”阻止深度网络“插值”（interpolate）数据（即完美拟合训练数据）。
+
+(5) 因此，L2 正则化在深度学习中的好处，可能只有在与“提前终止”（Early Stopping）相结合时才有意义。
+
+(6) 另一种解释是，这些经典方法之所以有效，可能不是因为它们真正“限制了”神经网络的拟合能力，而是因为它们以某种方式编码了“归纳偏置”（Inductive Biases），而这种偏置恰好与真实数据的模式更兼容。
+
+(7) 结论是，尽管经典正则化器在深度学习中仍然流行，但它们奏效的理论原因可能与经典理论的解释截然不同。
+
+(8) 深度学习还借鉴了其他经典正则化思想（如添加噪声），并发展出了 Dropout 技术，尽管其理论基础同样有些神秘。
+----------------------------------------------------------------------------------------------
+5.5.5 Summary
+(1) 深度网络通常是“过度参数化”的（Over-parameterized），参数数量远超样本数量。
+
+(2) 因此，它们在大多数任务上都能“完美拟合”训练集，即达到“插值”（Interpolation）状态。
+
+(3) 这种“插值状态”挑战了许多传统机器学习中关于过拟合的直觉。
+
+(4) 尽管神经网络表面上看是“参数模型”，但将它们视为“非参数模型”（即模型复杂度随数据增长）有时能提供更可靠的直觉。
+
+(5) 当所有模型都能完美拟合训练数据时（即训练误差为零），所有的“收益”都必须来自“缓解过拟合”（即缩小泛化差距）。
+
+(6) 悖论在于：用于缩小“泛化差距”的干预措施，有时看起来是“增加”了模型复杂度（如增加层数），而有时又像是“降低”了复杂度（如L2正则化）。
+
+(7) 然而，这些方法（如L2正则化）很少能像经典理论所要求的那样，将模型复杂度降低到足以解释其泛化能力的程度。
+
+(8) 总结：为什么深度网络能够泛化，以及为什么某些特定的选择（如正则化或架构）能带来更好的泛化，这在很大程度上仍然是一个悬而未决的重大问题。
+
+特征,参数模型 (Parametric),非参数模型 (Non-parametric)
+参数数量,固定的（由你选择的模型决定）,可变的（由数据量决定）
+模型复杂度,有限的,无限的（理论上可以随数据无限增长）
+预测时是否需要数据,不需要（只需要学到的参数）,需要（或需要数据的一部分，如k-NN）
+优点,训练快，预测快，需要数据少,灵活，能拟合非常复杂的数据模式
+缺点,容易“欠拟合”（如果模型太简单）,容易“过拟合”，计算慢，需要数据多
+----------------------------------------------------------------------------------------------
+5.6 Dropout
+(1) 经典泛化理论认为，一个好的模型应该是“简单的”。
+
+(2) “简单性”的一种有效定义是“平滑性”（smoothness），即模型函数不应该对输入的微小变化（例如图像中的随机噪声）过于敏感。
+
+(3) Bishop (1995) 的研究表明，在“输入”中添加噪声来训练模型，与Tikhonov正则化（一种L2正则化）在数学上是相关的，都能促使模型变得更平滑。
+
+(4) “Dropout”技术（Srivastava et al., 2014）将这种“注入噪声”的思想从“输入层”应用到了网络的“内部隐藏层”。
+
+(5) Dropout 是一种标准的正则化技术，它在训练过程中的“前向传播”时，通过“随机丢弃”（即归零）每一层中的“部分神经元”（节点）来注入噪声。
+
+(6) 关于 Dropout 为何有效的一种（有争议的）直觉是：它旨在打破神经元之间的“协同适应”（Co-adaptation），即防止网络中的某些神经元过度依赖其他特定神经元的存在。
+
+(7) 在实践中，Dropout 的关键挑战是如何“无偏地”（unbiased）注入噪声，即在不改变该层输出期望值的情况下添加随机性。
+
+(8) Dropout 的标准实现方式（以丢弃概率 p 为例）：
+    (I) 在训练期间，每个中间激活值 h 有 p 的概率被设置为 0（即被“丢弃”）。
+    (II) 同时，它有 (1-p) 的概率被“拉伸”或“放大”（rescale），变为 h / (1-p)。
+
+(9) 这种“拉伸”处理（除以 1-p）是一种“去偏”（debiasing）或“归一化”步骤，它确保了该激活值的期望值在训练中保持不变（即 $E[h'] = h$），从而稳定了模型的训练。
+import torch 
+from torch import nn 
+from d2l import torch as d2l
+----------------------------------------------------------------------------------------------
+5.6.1 Dropout in Practice
+(1) Dropout 在实践中，以概率 p 随机将隐藏层中的某些单元（神经元）归零。
+
+(2) 如图例所示（例如 h2 和 h5 被丢弃），输出层的计算将不再依赖于那些被丢弃的单元。
+
+(3) 相应地，在反向传播时，被丢弃单元的梯度也会消失为零。
+
+(4) 这种机制迫使网络不能过度依赖任何一个单独的隐藏单元，而是要学习更鲁棒的特征。
+
+(5) **在测试（推理）时**：标准做法是“关闭”Dropout。即所有单元都参与计算（不再丢弃），也不再需要归一化（因为归一化的补偿已在训练中完成）。
+
+(6) **一个例外（测试时使用Dropout）**：一些研究者会在测试时“故意”保持 Dropout 开启。
+
+(7) **目的**：将其作为一种估计模型“不确定性”（Uncertainty）的启发式方法。
+
+(8) **做法**：对同一个新样本，开启 Dropout 并运行模型多次（每次丢弃的单元都不同）。
+
+(9) **判断**：如果多次运行的预测结果“基本一致”，则表明网络对这个预测“非常自信”；如果结果“差异很大”，则表明网络“不自信”。
+----------------------------------------------------------------------------------------------
+5.6.2 Implementation from Scratch
+
+def dropout_layer(X, dropout):
+	assert 0 <= dropout <= 1
+	if dropout == 1: return torch.zeros_like(X)
+	mask = (torch.rand(X.shape) > dropout).float()
+	return mask * X / (1.0 - dropout)
+
+class DropoutMLPScratch(d2l.Classifier):#Model
+    """一个从零开始实现 Dropout 的多层感知机"""
+    def __init__(self, num_outputs, num_hiddens_1, num_hiddens_2,
+                 dropout_1, dropout_2, lr):
+        # 调用父类（d2l.Classifier）的构造函数
+        super().__init__()
+        # 保存超参数（方便 d2l 框架调用）
+        self.save_hyperparameters()
+        
+        # 定义第一个全连接（线性）层
+        self.lin1 = nn.LazyLinear(num_hiddens_1)
+        # 定义第二个全连接（线性）层
+        self.lin2 = nn.LazyLinear(num_hiddens_2)
+        # 定义输出层
+        self.lin3 = nn.LazyLinear(num_outputs)
+        # 定义 ReLU 激活函数
+        self.relu = nn.ReLU()
+
+    def forward(self, X):
+        # 将输入 X 展平为 (批量大小, 特征数) 的二维张量
+        # X.reshape((X.shape[0], -1))
+        
+        # 第一个隐藏层的计算：线性变换 + ReLU激活
+        H1 = self.relu(self.lin1(X.reshape((X.shape[0], -1))))
+        
+        # 检查模型是否处于“训练模式”（self.training 是 nn.Module 内置的属性）
+        if self.training:
+            # 如果是训练模式，对 H1 应用第一个 dropout
+            H1 = dropout_layer(H1, self.dropout_1)
+            
+        # 第二个隐藏层的计算：线性变换 + ReLU激活
+        H2 = self.relu(self.lin2(H1))
+        
+        # 再次检查是否处于“训练模式”
+        if self.training:
+            # 如果是训练模式，对 H2 应用第二个 dropout
+            H2 = dropout_layer(H2, self.dropout_2)
+            
+        # 计算输出层（不应用 ReLU 或 Dropout）
+        return self.lin3(H2)
+
+#Training
+# 1. hparams: 定义一个字典，集中管理模型的所有超参数。
+hparams = {'num_outputs':10, 'num_hiddens_1':256, 'num_hiddens_2':256,
+'dropout_1':0.5, 'dropout_2':0.5, 'lr':0.1}
+
+# 2. model: 使用 (**)hparams 字典解包的方式，实例化之前定义的 DropoutMLPScratch 模型。
+model = DropoutMLPScratch(**hparams)
+
+# 3. data: 加载 FashionMNIST 数据集，设置批量大小为 256。
+data = d2l.FashionMNIST(batch_size=256)
+
+# 4. trainer: 初始化 d2l 库中的训练器，设置最大训练周期为 10。
+trainer = d2l.Trainer(max_epochs=10)
+
+# 5. trainer.fit: 调用训练器的 fit 方法，使用指定的数据（data）来训练模型（model）。
+trainer.fit(model, data)
+----------------------------------------------------------------------------------------------
+5.6.3 Concise Implementation
+# 定义一个继承自 d2l.Classifier 的模型类
+class DropoutMLP(d2l.Classifier):
+    # 类的构造函数（初始化方法）
+    def __init__(self, num_outputs, num_hiddens_1, num_hiddens_2,
+                 dropout_1, dropout_2, lr):
+        # 调用父类（d2l.Classifier）的构造函数
+        super().__init__()
+        # 保存所有传入的超参数（如 d2l 框架所需）
+        self.save_hyperparameters()
+        # 使用 nn.Sequential 容器来按顺序搭建网络
+        # 这是 PyTorch 提供的简洁实现方式
+        self.net = nn.Sequential(
+            # 1. 将输入展平为二维（(批量大小, 特征数)）
+            nn.Flatten(),
+            # 2. 第一个隐藏层（线性变换）
+            nn.LazyLinear(num_hiddens_1),
+            # 3. ReLU 激活函数
+            nn.ReLU(),
+            # 4. 应用第一个 Dropout 层（使用 PyTorch 内置的 nn.Dropout）
+            # nn.Dropout 会自动处理训练和测试模式的切换
+            nn.Dropout(dropout_1),
+            # 5. 第二个隐藏层（线性变换）
+            nn.LazyLinear(num_hiddens_2),
+            # 6. ReLU 激活函数
+            nn.ReLU(),
+            # 7. 应用第二个 Dropout 层
+            nn.Dropout(dropout_2),
+            # 8. 输出层（线性变换）
+            nn.LazyLinear(num_outputs)
+        )
+
+model = DropoutMLP(**hparams)
+trainer.fit(model, data)
+----------------------------------------------------------------------------------------------
+5.6.4 Summary
+除了控制维度和权重向量的大小外，丢弃法（dropout）是另一种避免过拟合的工具。这些方法常常联合使用。
+需要注意的是，丢弃法仅在训练过程中使用：它将激活值ℎ替换为一个期望值为ℎ的随机变量。
+----------------------------------------------------------------------------------------------
+5.7 Predicting House Prices on Kaggle
+In this section, we will walk you through details of data preprocessing, model design, and hyperparameter selection.
+
+%matplotlib inline
+import pandas as pd
+import torch
+from torch import nn
+from d2l import torch as d2l
+----------------------------------------------------------------------------------------------
+5.7.1 Downloading Data
+def download(url, folder, sha1_hash=None):
+"""Download a file to folder and return the local filepath."""
+def extract(filename, folder):
+"""Extract a zip/tar file into folder."""
+----------------------------------------------------------------------------------------------
+5.7.2 Kaggle
+数据集网站:https://www.kaggle.com/c/house-prices-advanced-regression-techniques
+----------------------------------------------------------------------------------------------
+5.7.3 Accessing and Reading the Dataset
+# 定义一个继承自 d2l.DataModule 的类，用于处理 Kaggle 房价预测数据
+class KaggleHouse(d2l.DataModule):
+
+    # 构造函数（初始化方法）
+    # batch_size: 批量大小
+    # train, val: 可选参数，允许传入已经处理好的训练集和验证集
+    def __init__(self, batch_size, train=None, val=None):
+        
+        # 调用父类（d2l.DataModule）的构造函数
+        super().__init__()
+        
+        # 保存传入的超参数（如 batch_size, train, val）
+        self.save_hyperparameters()
+        
+        # 检查 self.train 是否为 None
+        # 如果在创建实例时没有“外部传入” train 数据集，则执行以下下载逻辑
+        if self.train is None:
+            
+            # 1. 下载原始训练数据 (train.csv)
+            #    d2l.download(URL, 保存路径, SHA1校验和)
+            # 2. 使用 pandas 的 read_csv 读取下载好的文件
+            # 3. 将读取的数据（DataFrame）存储在 self.raw_train 属性中
+            self.raw_train = pd.read_csv(d2l.download(
+                d2l.DATA_URL + 'kaggle_house_pred_train.csv', self.root,
+                sha1_hash='585e9cc93e70b39160e7921475f9bcd7d31219ce'))
+            
+            # 1. 下载原始测试数据 (test.csv)
+            # 2. 使用 pandas 的 read_csv 读取
+            # 3. 将读取的数据（DataFrame）存储在 self.raw_val 属性中
+            self.raw_val = pd.read_csv(d2l.download(
+                d2l.DATA_URL + 'kaggle_house_pred_test.csv', self.root,
+                sha1_hash='fa19780a7b011d9b009e8bff8e99922a8ee2eb90'))
+
+data = KaggleHouse(batch_size=64)
+print(data.raw_train.shape)
+print(data.raw_val.shape)
+----------------------------------------------------------------------------------------------
+5.7.4 Data Preprocessing
+(1) 数据概览：原始数据包含 Id 列（标识符）、多种特征（数值型和类别型）以及 SalePrice（销售价格）标签。
+(2) 处理目标：在建模之前，必须对数据进行预处理。Id 列对预测没有帮助，需要移除。
+(3) 处理策略：为了确保训练数据和测试数据（验证集）接受完全相同的预处理（例如，使用相同的均值和方差进行标准化，生成相同的独热编码列），最佳实践是： (I) 将训练集（移除标签后）和验证集“纵向合并”（concatenate）成一个大数据框 features。 (II) 对 features 统一进行预处理。 (III) 预处理完成后，再将 features 拆分回训练集 self.train 和验证集 self.val。
+(4) 数值特征处理： (I) 标准化（Standardization）：识别所有数值型特征（例如，非 'object' 类型的列）。将它们全部缩放到“零均值”和“单位方差”。 (II) 为何标准化：这确保了所有特征都在一个共同的尺度上，有助于优化算法（如梯度下降）更快收敛，并且不会因为某些特征的数值范围过大而主导模型。 (III) 处理缺失值（NaN）：在标准化之后，用 0 来填充数值特征中的所有缺失值（NaN）。（因为 0 此时已经是数据的均值）。
+(5) 离散特征（类别特征）处理： (I) 独热编码（One-Hot Encoding）：使用 Pandas 的 get_dummies 函数自动将所有离散特征（如 MSZoning）转换为独热编码。 (II) 处理缺失值（NaN）：在独热编码时，设置 dummy_na=True。这将为“缺失”这个状态本身也创建一个新的指示器（indicator）列，让模型可以学习到“缺失”是否也是一种信息。
+(6) 结果： (I) 独热编码会极大地增加特征的数量（例如，从79个增加到331个）。 (II) 最后，将原始的 SalePrice 标签重新附加到处理好的训练集 self.train 上。
+
+# (此代码为 KaggleHouse 类的一个方法)
+# d2l.add_to_class(KaggleHouse)
+def preprocess(self):
+    
+    # 1. 定义标签列的名称
+    label = 'SalePrice'
+    
+    # 2. 合并训练和验证（测试）数据
+    #    - 从 self.raw_train 中移除 'Id' 和标签 'SalePrice'
+    #    - 从 self.raw_val 中移除 'Id'
+    #    - 将两者纵向拼接 (pd.concat) 以便统一处理
+    features = pd.concat((
+        self.raw_train.drop(columns=['Id', label]),
+        self.raw_val.drop(columns=['Id'])))
+
+    # 3. 标准化数值列
+    #    - 找出所有数据类型不是 'object' (即数值型) 的列
+    numeric_features = features.dtypes[features.dtypes != 'object'].index
+    
+    #    - 对这些数值列应用标准化 (z-score: (x - 均值) / 标准差)
+    features[numeric_features] = features[numeric_features].apply(
+        lambda x: (x - x.mean()) / (x.std()))
+
+    # 4. 填充数值列中的缺失值 (NaN)
+    #    - 因为数据已经标准化，均值为0，所以用 0 填充缺失值是合理的
+    features[numeric_features] = features[numeric_features].fillna(0)
+
+    # 5. 替换离散特征为独热编码
+    #    - dummy_na=True: 同时也将 "NaN" (缺失值) 视为一个有效的类别进行独热编码
+    features = pd.get_dummies(features, dummy_na=True)
+
+    # 6. 保存预处理后的特征
+    #    - (接上一步) 将合并的 features 拆分回训练集和验证集
+    
+    #    - 从头截取到 raw_train 的长度，作为处理后的训练集
+    self.train = features[:self.raw_train.shape[0]].copy()
+    
+    #    - 将原始的 SalePrice 标签添加回处理后的训练集
+    self.train[label] = self.raw_train[label]
+    
+    #    - 截取 raw_train 长度之后的部分，作为处理后的验证集
+    self.val = features[self.raw_train.shape[0]:].copy()
+
+# --- (以下是调用该方法的代码) ---
+
+# 假设 data 是 KaggleHouse 的一个实例
+# data = KaggleHouse(batch_size=...)
+
+# 调用预处理方法
+data.preprocess()
+
+# 打印处理后训练集的形状 (例如: 1460行, 331列)
+print(data.train.shape)
+----------------------------------------------------------------------------------------------
+5.7.5 Error Measure
+# 装饰器，将此方法（get_dataloader）动态添加到 KaggleHouse 类中
+@d2l.add_to_class(KaggleHouse)
+def get_dataloader(self, train):
+    # 定义标签（目标变量）的列名
+    label = 'SalePrice'
+    
+    # 根据 train 标志（布尔值），选择使用 self.train 还是 self.val
+    # train=True -> data = self.train
+    # train=False -> data = self.val
+    data = self.train if train else self.val
+    
+    # 安全检查：如果所选数据（data）中不包含标签列
+    # (例如，当 data=self.val 且 self.val 是无标签的测试集时)，则直接返回 None
+    if label not in data: return
+    
+    # 定义一个 lambda 辅助函数：
+    # 接收一个 pandas 对象 x，将其转换为 float32 类型的 PyTorch 张量
+    get_tensor = lambda x: torch.tensor(x.values.astype(float),
+                                        dtype=torch.float32)
+    
+    # 准备特征(X)和标签(Y)的张量元组
+    tensors = (
+        # X: 移除标签列 (drop columns)，剩下的全部作为特征，并转换为张量
+        get_tensor(data.drop(columns=[label])),
+        
+        # Y: 
+        # 1. 选取标签列 data[label]
+        # 2. 转换为张量
+        # 3. 对价格（Y）取自然对数 (torch.log)
+        # 4. .reshape((-1, 1)) 将 Y 变形为 (N, 1) 的二维列向量
+        torch.log(get_tensor(data[label])).reshape((-1, 1))
+    )
+    
+    # 调用父类 (d2l.DataModule) 的 get_tensorloader 方法
+    # 它会使用这个 (X, Y) 张量元组来创建一个 PyTorch DataLoader
+    # (DataLoader 会自动处理批量(batching)和打乱(shuffling, if train=True))
+    return self.get_tensorloader(tensors, train)
+----------------------------------------------------------------------------------------------
+5.7.6 𝐾-Fold Cross-Validation
+# 定义一个函数，用于将数据（data）划分为 k 折（k-fold）
+def k_fold_data(data, k):
+    
+    # rets (returns) 是一个空列表，用于存储 k 组划分好的数据
+    rets = []
+    
+    # data.train.shape[0] 是训练样本的总数
+    # // k 是整数除法，计算每一折（fold）的样本数量
+    fold_size = data.train.shape[0] // k
+    
+    # 循环 k 次 (j 从 0 到 k-1)，每次循环生成一组（训练集, 验证集）
+    for j in range(k):
+        
+        # 计算第 j 折作为“验证集”的行索引范围
+        # 例如，j=0时, idx = range(0, fold_size)
+        # 例如，j=1时, idx = range(fold_size, 2 * fold_size)
+        idx = range(j * fold_size, (j+1) * fold_size)
+        
+        # rets.append(): 将新创建的数据对象添加到列表中
+        # KaggleHouse(...): 创建一个新的 KaggleHouse 数据模块实例
+        #     data.batch_size: (参数1) 传入原始的 batch_size
+        #     data.train.drop(index=idx): (参数2) 新的训练集 = 原始训练集 减去(drop) 当前验证集的索引(idx)
+        #     data.train.loc[idx]: (参数3) 新的验证集 = 原始训练集 按位置(loc) 选取 当前验证集的索引(idx)
+        rets.append(KaggleHouse(data.batch_size, data.train.drop(index=idx),
+                               data.train.loc[idx]))
+        
+    # 返回包含 k 个 KaggleHouse 实例（即 k 组数据）的列表
+    return rets
+
+
+
+# 定义一个 K 折交叉验证的函数
+# trainer: d2l 训练器实例
+# data: 完整的 KaggleHouse 数据模块实例
+# k: 折数（例如 5 折）
+# lr: 学习率
+def k_fold(trainer, data, k, lr):
+    
+    # val_loss: 空列表，用于存储每一折训练后在验证集上的损失
+    # models: 空列表，用于存储每一折训练好的模型
+    val_loss, models = [], []
+    
+    # 1. 调用 k_fold_data 函数将数据划分为 k 份 (data_fold)
+    # 2. enumerate() 迭代这 k 份数据，i 是折数的索引 (0 到 k-1)
+    for i, data_fold in enumerate(k_fold_data(data, k)):
+        
+        # 为当前折创建一个新的线性回归模型实例，并传入学习率
+        model = d2l.LinearRegression(lr)
+        
+        # 设置 d2l 绘图板 (board) 的 y 轴为对数尺度 (log scale)，因为损失可能相差很大
+        model.board.yscale='log'
+        
+        # 优化显示：只在第一次循环 (i=0) 时显示绘图板
+        # 后续循环 (i != 0) 仍在计算，但不再重复弹出绘图窗口
+        if i != 0: model.board.display = False
+        
+        # 使用 d2l 训练器，在当前数据折 (data_fold) 上训练当前模型 (model)
+        trainer.fit(model, data_fold)
+        
+        # 训练完成后，从模型的绘图板 (board) 中提取“最后”一个“验证损失”
+        # model.board.data['val_loss'][-1].y 获取最后一个 epoch 的 val_loss 值
+        # float(...) 转换为 python 浮点数并存入列表
+        val_loss.append(float(model.board.data['val_loss'][-1].y))
+        
+        # 将当前折训练好的模型存入列表
+        models.append(model)
+        
+    # K 折循环全部结束后，计算 k 次验证损失的平均值
+    print(f'average validation log mse = {sum(val_loss)/len(val_loss)}')
+    
+    # 返回存储了 k 个训练好的模型的列表
+    return models
+----------------------------------------------------------------------------------------------
+5.7.7 Model Selection
+trainer = d2l.Trainer(max_epochs=10)
+models = k_fold(trainer, data, k=5, lr=0.01)  #average validation log mse = 0.17325432986021042
+(1) K折交叉验证（K-fold cross-validation）是模型选择时一种相当可靠（resilient）的工具。
+
+(2) K折交叉验证也有限制：如果你尝试了“过多”的超参数组合，那么验证集上的性能可能不再能代表真实的误差（即你过拟合了验证集）。
+
+(3) 在实践中，你需要同时监控“训练误差”和“K折交叉验证误差”（即验证误差）。
+
+(4) 当训练误差非常低，而K折交叉验证误差明显更高时，这表明模型正在“过拟合”。
+
+(5) 我们可以根据过拟合的程度来采取行动：
+    (I) “严重的过拟合”（Massive overfitting）强烈暗示我们应该引入“正则化技术”（regularization techniques）来限制模型。
+    (II) （反之）“轻微的过拟合”可能表明我们的数据有潜力支持一个更强大的模型。
+----------------------------------------------------------------------------------------------
+5.7.8 Submitting Predictions on Kaggle
+
+# 1. preds: 这是一个列表推导式 (list comprehension)
+#    - models: 遍历 K 折交叉验证返回的 k 个模型
+#    - data.val.values.astype(float): 获取验证集（测试集）数据，转为 NumPy 浮点数组
+#    - torch.tensor(..., dtype=torch.float32): 将数据转为 PyTorch 张量
+#    - model(...): 使用当前模型对“整个”验证集进行预测
+#    - [ ... for ... ]: 将 k 个模型的预测结果（k个张量）收集到一个列表中 (preds)
+preds = [model(torch.tensor(data.val.values.astype(float), dtype=torch.float32))
+         for model in models]
+
+# 2. torch.cat(preds, 1):
+#    - preds 是一个包含 k 个 (N, 1) 形状张量的列表
+#    - dim=1: 沿着维度 1（列）进行拼接 (concatenate)
+#    - 结果：一个形状为 (N, k) 的张量，N 是样本数，k 是模型数
+#    - torch.exp(...): 对 (N, k) 张量中的所有值取指数（exp）
+#      (因为模型预测的是 log(SalePrice)，现在将其还原回 SalePrice)
+#    - .mean(1): 沿着维度 1（k 个模型的预测值）计算平均值
+#    - 结果：ensemble_preds 是一个形状为 (N,) 的张量，即最终的集成预测
+ensemble_preds = torch.exp(torch.cat(preds, 1)).mean(1)
+
+# 3. submission: 创建一个新的 pandas DataFrame 用于提交
+#    - 'Id': data.raw_val.Id: 使用原始验证（测试）数据中的 'Id' 列
+#    - 'SalePrice': ensemble_preds.detach().numpy():
+#      - .detach(): 从计算图中分离张量（停止梯度跟踪）
+#      - .numpy(): 将 PyTorch 张量转换回 NumPy 数组
+#      - 将集成预测结果作为 'SalePrice' 列
+submission = pd.DataFrame({'Id':data.raw_val.Id,
+                           'SalePrice':ensemble_preds.detach().numpy()})
+
+# 4. submission.to_csv(...): 将 DataFrame 保存为 CSV 文件
+#    - 'submission.csv': 导出的文件名
+#    - index=False: 保存 CSV 时不包含 pandas 的行索引
+submission.to_csv('submission.csv', index=False)
+----------------------------------------------------------------------------------------------
+5.7.9 Summary and Discussion
+(1) 真实世界的数据通常包含混合的数据类型，必须进行预处理。
+
+(2) 将数值型数据（real-valued data）“标准化”（即缩放到零均值和单位方差）是一个很好的默认操作。
+
+(3) （同样地）用均值来替换缺失值也是一个很好的默认操作。（在标准化后，即用0来替换）。
+
+(4) 将类别特征（categorical features）转换为“指示器特征”（indicator features，即独热编码），可以让我们像处理one-hot向量一样统一处理它们。
+
+(5) 当我们更关心“相对误差”（例如房价上涨10%）而非“绝对误差”（例如房价上涨1万元）时，我们可以在“对数尺度”（logarithm）上测量预测的差异（即对标签取对数）。
+
+(6) 我们可以使用“K折交叉验证”（K-fold cross-validation）来帮助我们选择模型和调整超参数。
+----------------------------------------------------------------------------------------------
+END...

@@ -1,0 +1,1013 @@
+Tasks:loading the data,   ---Data
+passing it through the model,  ---Model
+generating output, calculating the loss, ---Loss function
+taking gradients with respect to weights, ---grad
+and updating the model.  ---update Model
+----------------------------------------------------------------------------------------------
+4.1 Softmax Regression
+一、分类任务的基本形式
+分类 (Classification)：目标是将样本分配到一个或多个类别中。
+常见问题：这张图片是猫还是狗？邮件是垃圾还是正常？一篇新闻属于哪个主题？
+
+二、硬分类 (Hard Classification)
+定义：只输出一个确定的类别标签。
+特点：每个样本只能属于一个类别。输出是“硬决策”，没有概率信息。
+例子：垃圾邮件过滤（垃圾 / 非垃圾）。
+
+三、软分类 (Soft Classification)
+定义：输出每个类别的概率分布。
+特点：提供不确定性信息。即使最终只需要硬分类，模型通常还是先输出概率，再取最大概率类别。
+例子：医学诊断（病人患病概率 70%，健康概率 30%）。
+
+四、多标签分类 (Multi-label Classification)
+定义：一个样本可以同时属于多个类别。
+特点：不同于硬分类的“互斥性”。常见于文本、图像标注。
+例子：一篇新闻既属于“体育”，又属于“商业”。一张图片同时被标注为“娱乐”“时尚”“人物”。
+----------------------------------------------------------------------------------------------
+4.1.1 Classification
+一、One-hot Encoding
+在一个三分类问题（猫、鸡、狗）中，标签 y 不能直接用文字表示，而是用一个三维向量来表示：
+(1, 0, 0) → cat
+(0, 1, 0) → chicken
+(0, 0, 1) → dog
+
+二、Linear Model
+线性模型通过公式 o = Wx + b 生成各类别的打分，为后续 softmax 转换为概率做准备。
+符号说明：
+x：输入特征向量
+W：权重矩阵（维度 = 特征数 × 类别数）
+b：偏置向量（维度 = 类别数）
+o：输出向量（logits，未归一化分数）
+
+三、Softmax 的逐行操作
+- 对 O 的每一行（对应一个样本）：
+  1. 对所有类别打分取指数。
+  2. 再除以该行所有指数和，得到概率分布。
+- 数学形式：
+  ŷ_i = exp(o_i) / Σ_j exp(o_j)
+
+四、数值稳定性
+- 问题：exp(o) 可能导致上溢或下溢。
+- 解决：深度学习框架内部会自动进行数值稳定处理（如减去最大值）。
+
+五、向量化的动机
+- 定义：将单样本的计算扩展到小批量 (minibatch) 的矩阵运算，以提升计算效率。
+- 特点：
+  1. 避免循环，利用矩阵乘法加速。
+  2. 更适合 GPU 并行计算。
+- 例子：一次性处理 n 个样本，而不是逐个样本计算。
+
+六、数学形式
+- 输入：X ∈ ℝ^(n×d)，n 个样本，每个样本 d 个特征。
+- 权重：W ∈ ℝ^(d×q)，q 为类别数。
+- 偏置：b ∈ ℝ^(1×q)，对所有样本共享。
+- 输出：
+  O = XW + b
+  Ŷ = softmax(O)
+----------------------------------------------------------------------------------------------
+4.1.2 Loss Function
+Log-Likelihood：负对数似然 (NLL)
+- 最大化似然等价于最小化负对数似然：
+  -log P(Y | X) = - Σ_{i=1}^n log P(y^(i) | x^(i))    (4.1.7)
+单样本损失函数：
+- 标签 y 用 one-hot 向量表示。
+- 单个样本的损失函数为：
+  l(y, ŷ) = - Σ_{j=1}^q y_j log ŷ_j    (4.1.8)
+
+Softmax and Cross-Entropy Loss：
+	交叉熵损失对 logit 的导数 = 模型预测的概率（softmax 输出） − 真实标签（one-hot 向量）。这意味着梯度就是“预测值和真实值的差”。
+	为什么重要？这看起来很直观甚至有点“显而易见”，但它揭示了一个关键事实：对数似然的梯度 = 损失函数的梯度。这让梯度计算在实践中非常简单。推广到分布标签：如果标签不是 one-hot（例如 (0,0,0,1)），而是一个概率分布（例如 (0.1,0.2,0.7)），公式依然成立。
+	这种情况下，损失就是“真实分布 y 与预测分布 ŷ 的交叉熵”。
+信息论视角：交叉熵可以理解为：用预测分布 ŷ 来编码真实分布 y 时所需的平均信息量（比特数）。损失越小，说明预测分布越接近真实分布。
+----------------------------------------------------------------------------------------------
+4.1.3 Information Theory Basics
+	Information theory deals with the problem of encoding, decoding, transmitting, and manipulating information(also known as data).
+
+Entropy:- 熵 H[P] 用来度量一个分布 P 中包含的信息量。
+- 数学形式：
+  H[P] = - Σ_j P(j) log P(j)    (4.1.11)
+- 熵表示在最优编码下，平均需要多少信息量（单位：nats 或 bits）来表示从分布 P 中抽取的随机变量。
+- 熵越大，表示不确定性越高，需要更多信息来描述。
+- 基本结论：要对来自分布 P 的数据进行编码，至少需要 H[P] 个“nats”。
+- “nat” 是以自然对数 e 为底的单位，相当于信息量的度量。
+- 1 nat = 1 / log(2) ≈ 1.44 bits
+- 如果以 2 为底，则熵的单位是 bits；以 e 为底，则是 nats。
+
+Surprisal（惊讶度）
+- 定义：衡量事件发生时的“意外程度”。
+- 数学形式：
+  surprisal(j) = - log P(j)
+- 特点：
+  1. 概率越大 → 惊讶度越低。
+  2. 概率越小 → 惊讶度越高。
+- 例子：
+  - 太阳升起 (P≈1) → 惊讶度≈0
+  - 彩票中奖 (P极小) → 惊讶度极大
+- 熵 H(P) = 期望惊讶度，即在真实分布 P 下的平均信息量。
+
+Cross-Entropy（交叉熵）
+- 定义：当真实分布为 P，但我们用预测分布 Q 来描述时的平均惊讶度。
+- 数学形式：
+  H(P, Q) = Σ_ j - P(j) log Q(j)
+- 特点：
+  1. 如果 Q = P，则 H(P, Q) = H(P)。
+  2. 如果 Q 偏离 P，则 H(P, Q) > H(P)，表示预测分布不准确，平均惊讶度更高。
+- 信息论意义：
+  - 熵 H(P)：知道真实分布时的最优编码长度。
+  - 交叉熵 H(P, Q)：用预测分布 Q 编码真实分布 P 时的平均编码长度。
+  - 二者差值为 KL 散度：H(P, Q) = H(P) + D_KL(P || Q)。
+----------------------------------------------------------------------------------------------
+4.1.4 Summary and Discussion
+一、离散输出空间的优化
+- 我们遇到的第一个非平凡损失函数：交叉熵损失。
+- 关键思想：采用概率化方法，将离散类别视为从概率分布中抽样得到。
+
+二、Softmax 的作用
+- Softmax 将神经网络层的输出转化为合法的离散概率分布。
+- 结合交叉熵损失，其梯度形式与平方误差类似：预测值 - 真实值。
+
+三、信息论与统计物理的联系
+- 交叉熵与熵、惊讶度等概念紧密相关。
+- 在信息论中，交叉熵衡量预测分布与真实分布的差异。
+- 在统计物理中也有类似的概率解释。
+
+四、计算复杂度问题
+- 对于一个全连接层，输入维度 d，输出维度 q：
+  - 计算复杂度为 O(dq)，在实际中可能过高。
+- 降低复杂度的方法：
+  1. 近似与压缩技术。
+  2. 结构化矩阵近似（如随机投影、置换、缩放）。
+  3. 量化压缩技巧，可将复杂度降至 O(d + q)，以牺牲少量精度换取效率。
+
+五、挑战与研究方向
+- 计算与存储成本是深度模型训练的主要挑战。
+- 最优表示方式并不总是由浮点运算次数决定，而取决于在现代 GPU 上的执行效率。
+- 如何在保持精度的同时降低计算与存储开销，是一个活跃的研究领域。
+----------------------------------------------------------------------------------------------
+4.2 The Image Classification Dataset
+%matplotlib inline
+import time
+import torch
+import torchvision
+from torchvision import transforms
+from d2l import torch as d2l
+d2l.use_svg_display()
+----------------------------------------------------------------------------------------------
+4.2.1 Loading the Dataset
+class FashionMNIST(d2l.DataModule):  #@save
+    """The Fashion-MNIST dataset."""
+    def __init__(self, batch_size=64, resize=(28, 28)):
+        # 调用父类 d2l.DataModule 的初始化方法
+        super().__init__()
+
+        # 保存超参数（如 batch_size, resize 等），方便后续调用
+        # d2l 库里封装了 save_hyperparameters()，会自动把 __init__ 里的参数存起来
+        self.save_hyperparameters()
+        
+        # 定义数据预处理流程（transform）
+        # 1. Resize：将图像缩放到指定大小 (28,28)
+        # 2. ToTensor：把 PIL 图像或 numpy 数组转换为 PyTorch 张量，并归一化到 [0,1]
+        trans = transforms.Compose([
+            transforms.Resize(resize),
+            transforms.ToTensor()
+        ])
+        
+        # 加载训练集
+        # root=self.root：数据存放路径（由 DataModule 父类定义）
+        # train=True：表示加载训练集
+        # transform=trans：应用上面定义的预处理
+        # download=True：如果本地没有数据集，会自动下载
+        self.train = torchvision.datasets.FashionMNIST(
+            root=self.root, train=True, transform=trans, download=True
+        )
+        
+        # 加载测试集（这里命名为 val，表示验证集）
+        # train=False：表示加载测试集
+        self.val = torchvision.datasets.FashionMNIST(
+            root=self.root, train=False, transform=trans, download=True
+        )
+
+data = FashionMNIST(resize=(32, 32))
+len(data.train), len(data.val) #(60000, 10000)
+data.train[0][0].shape #torch.Size([1, 32, 32])，第一个0是img，第2个0是label
+
+@d2l.add_to_class(FashionMNIST)  # 把方法动态添加到 FashionMNIST 类中
+def text_labels(self, indices):
+    """返回文字标签"""
+    labels = ['t-shirt', 'trouser', 'pullover', 'dress', 'coat',
+              'sandal', 'shirt', 'sneaker', 'bag', 'ankle boot']  # Fashion-MNIST 的 10 个类别
+    return [labels[int(i)] for i in indices]  # 将数字标签转成对应的文字标签
+----------------------------------------------------------------------------------------------
+4.2.2 Reading a Minibatch
+
+@d2l.add_to_class(FashionMNIST)  # 把方法动态添加到 FashionMNIST 类
+def get_dataloader(self, train):
+    # 根据 train=True/False 选择训练集或验证集
+    data = self.train if train else self.val
+    
+    # 返回一个 DataLoader，用于批量加载数据
+    return torch.utils.data.DataLoader(
+        data,                       # 数据集
+        self.batch_size,            # 每个 batch 的大小
+        shuffle=train,              # 训练集打乱顺序，验证集不打乱
+        num_workers=self.num_workers  # 数据加载的子进程数量
+    )
+
+# 从训练集的 DataLoader 中取出一个 batch
+# data.train_dataloader() 返回的是一个 DataLoader，可以按批次迭代数据
+# iter(...) 把 DataLoader 转换成迭代器
+# next(...) 从迭代器里取出第一个 batch
+# 一个 batch 返回 (X, y)，其中：
+#   X 是图像张量，形状通常是 (batch_size, 通道数, 高, 宽)
+#   y 是标签张量，形状通常是 (batch_size,)
+X, y = next(iter(data.train_dataloader()))  
+
+# 打印图像和标签的形状与数据类型
+print(
+    X.shape,   # 图像批次的维度 (batch_size, 通道数, 高, 宽)，例如 torch.Size([64, 1, 32, 32])
+    X.dtype,   # 图像的数据类型，一般是 torch.float32
+    y.shape,   # 标签的维度 (batch_size,)，例如 torch.Size([64])
+    y.dtype    # 标签的数据类型，一般是 torch.int64
+)
+
+tic = time.time()
+for X, y in data.train_dataloader():
+	continue
+f'{time.time() - tic:.2f} sec'  #'4.69 sec'
+----------------------------------------------------------------------------------------------
+4.2.3 Visualization
+def show_images(imgs, num_rows, num_cols, titles=None, scale=1.5): #@save
+	"""Plot a list of images."""#仅仅是占位符，还没写完
+	raise NotImplementedError
+
+@d2l.add_to_class(FashionMNIST)  # 把下面定义的函数动态添加到 FashionMNIST 类
+def visualize(self, batch, nrows=1, ncols=8, labels=[]):
+    # batch 是从 DataLoader 里取出的一个小批量 (X, y)
+    X, y = batch
+    
+    # 如果没有传入 labels，就用数据集自带的数字标签 y 转换成文字标签
+    if not labels:
+        labels = self.text_labels(y)  # 调用前面定义的 text_labels 方法
+    
+    # 调用 d2l.show_images 显示图像
+    # X.squeeze(1) 去掉通道维度 (batch_size, 1, H, W) → (batch_size, H, W)
+    # nrows, ncols 控制显示的行列数
+    # titles=labels 在每张图上方显示类别名称
+    d2l.show_images(X.squeeze(1), nrows, ncols, titles=labels)
+
+
+# 从验证集 DataLoader 里取出一个 batch
+batch = next(iter(data.val_dataloader()))
+
+# 调用刚刚添加的 visualize 方法，把这个 batch 可视化
+data.visualize(batch)
+----------------------------------------------------------------------------------------------
+4.2.4 Summary
+1. 数据集简介
+- Fashion-MNIST：服装分类数据集
+- 类别数：10 类（T-shirt、鞋子、包等）
+- 用途：用于评估不同网络结构（线性模型 → 卷积网络 → 残差网络）
+
+2. 数据表示
+- 图像存储为四维张量：
+  (batch size, channels, height, width)
+- 灰度图 → channels = 1
+- 示例：torch.Size([64, 1, 28, 28])
+- 可视化时可能使用伪彩色增强对比度，便于观察
+
+3. 数据迭代器 (DataLoader)
+- 作用：批量加载数据，支持 shuffle、多进程并行
+- 重要性：高效的数据迭代器能显著提升训练性能
+- 优化点：
+  * 利用 GPU 加速预处理（如图像解压缩、视频转码）
+  * 合理设置 num_workers，避免数据加载成为瓶颈
+
+Fashion-MNIST 是一个更贴近实际的服装分类数据集，
+图像以 (N, C, H, W) 张量形式存储，
+训练时依赖高效的数据迭代器来保证性能。
+----------------------------------------------------------------------------------------------
+4.3 The Base Classification Model
+import torch
+from d2l import torch as d2l
+----------------------------------------------------------------------------------------------
+4.3.1 The Classifier Class
+class Classifier(d2l.Module):  #@save
+    """分类模型的基类"""
+
+    def validation_step(self, batch):
+        # batch 通常是一个小批量数据 (X, y)
+        # 例如：X 是输入图像张量，y 是对应的标签
+
+        # batch[:-1] 表示取除了最后一个元素以外的所有内容
+        # 对于 (X, y) 来说，batch[:-1] = (X,)
+        # 注意：它还是一个元组，只是里面只有 X
+
+        # *batch[:-1] 使用了解包操作符 *
+        # 把 (X,) 解包成 X
+        # 如果 batch 是 (X, Z, y)，那么 batch[:-1] = (X, Z)，
+        # *batch[:-1] 就会解包成 X, Z —— 这样可以支持多输入的情况
+
+        # self(...) 在 PyTorch 中等价于 self.forward(...)
+        # 所以这里就是把输入 X 喂给模型，得到预测结果 Y_hat
+        Y_hat = self(*batch[:-1])
+
+        # 计算损失，并记录到可视化曲线里
+        # self.loss(Y_hat, batch[-1])：预测结果 vs 真实标签
+        # train=False 表示这是验证集，不是训练集
+        self.plot('loss', self.loss(Y_hat, batch[-1]), train=False)
+
+        # 计算准确率，并记录到可视化曲线里
+        self.plot('acc', self.accuracy(Y_hat, batch[-1]), train=False)
+
+@d2l.add_to_class(d2l.Module) #@save
+def configure_optimizers(self): 
+	return torch.optim.SGD(self.parameters(), lr=self.lr)
+----------------------------------------------------------------------------------------------
+4.3.2 Accuracy
+@d2l.add_to_class(Classifier)  # 把这个方法动态添加到 Classifier 类
+def accuracy(self, Y_hat, Y, averaged=True):
+    """计算预测的准确率"""
+
+    # Y_hat: 模型输出的预测结果，形状通常是 (batch_size, num_classes)
+    # Y:     真实标签，形状通常是 (batch_size,)
+
+    # 1. reshape：把 Y_hat 整理成二维 (N, num_classes)
+    #    -1 表示自动推算这一维的大小
+    #    Y_hat.shape[-1] 表示类别数 num_classes
+    #    这样做的目的是把前面所有维度展平，方便后续计算
+    Y_hat = Y_hat.reshape((-1, Y_hat.shape[-1]))
+
+    # 2. argmax(axis=1)：在类别维度上取最大值的索引
+    #    也就是每个样本预测概率最大的类别
+    #    例如 [0.1, 0.7, 0.2] → 预测类别 1
+    #    .type(Y.dtype)：把预测结果转换成和真实标签 Y 相同的数据类型
+    preds = Y_hat.argmax(axis=1).type(Y.dtype)
+
+    # 3. 比较预测结果和真实标签是否相等
+    #    (preds == Y.reshape(-1)) → 得到布尔向量 [True, False, True ...]
+    #    .type(torch.float32) → 转成 0.0 / 1.0，方便后续求平均
+    compare = (preds == Y.reshape(-1)).type(torch.float32)
+
+    # 4. 如果 averaged=True，就返回平均值 (即准确率)
+    #    否则返回逐样本的 0/1 向量
+    return compare.mean() if averaged else compare
+----------------------------------------------------------------------------------------------
+4.3.3 Summary
+1. 分类问题的重要性
+- 分类是机器学习中非常常见的一类任务
+- 因此需要一些专门的工具函数来简化实现
+
+2. 准确率 (Accuracy) 的核心地位
+- 在分类任务中，最重要的评价指标之一就是准确率
+- 准确率 = 预测正确的样本数 ÷ 总样本数
+
+3. 训练 vs 评价
+- 训练时通常不会直接优化准确率，因为它不可微分
+- 我们会选择其他可微的损失函数（如交叉熵损失）来训练模型
+
+4. 为什么还要计算准确率
+- 无论训练时用的是什么损失函数，最终都需要一个直观的指标来衡量模型效果
+- 准确率是最常用的经验性评估指标，能帮助判断模型在实际任务中的表现
+
+虽然训练时优化的是损失函数，但在分类问题中，
+准确率始终是最直观、最常用的性能指标。
+----------------------------------------------------------------------------------------------
+4.4 Softmax Regression Implementation from Scratch
+	在此，我们仅专注于定义该模型中与softmax相关的特定部分，并沿用线性回归章节中的其他组件，包括训练循环。
+import torch
+from d2l import torch as d2l
+----------------------------------------------------------------------------------------------
+4.4.1 The Softmax
+X = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+X.sum(0, keepdims=True), X.sum(1, keepdims=True)
+#(tensor([[5., 7., 9.]]),tensor([[ 6.],
+						[15.]]))
+Softmax 把任意实数向量转化为 概率分布。
+三步走：指数化 → 按行求和 → 除以归一化常数
+
+def softmax(X):
+	X_exp = torch.exp(X)
+	partition = X_exp.sum(1, keepdims=True)
+	return X_exp / partition # The broadcasting mechanism is applied here
+
+X = torch.rand((2, 5))
+X_prob = softmax(X) #验证softmax函数
+X_prob, X_prob.sum(1)#求和看看是不是1
+----------------------------------------------------------------------------------------------
+4.4.2 The Model
+class SoftmaxRegressionScratch(d2l.Classifier):
+    def __init__(self, num_inputs, num_outputs, lr, sigma=0.01):
+        super().__init__()  
+        # 调用父类 d2l.Classifier 的初始化方法
+
+        self.save_hyperparameters()
+        # 保存超参数 (num_inputs, num_outputs, lr, sigma)，
+        # 方便后续在训练或可视化时调用
+
+        # 初始化权重矩阵 W
+        # 形状: (num_inputs, num_outputs)
+        # 每个输入特征对应每个类别一个权重
+        # 用均值=0, 方差=sigma^2 的正态分布随机初始化
+        self.W = torch.normal(0, sigma, size=(num_inputs, num_outputs),
+                              requires_grad=True)
+
+        # 初始化偏置向量 b
+        # 形状: (num_outputs,)
+        # 每个类别一个偏置，初始为 0
+        self.b = torch.zeros(num_outputs, requires_grad=True)
+
+    def parameters(self):
+        # 返回需要训练的参数列表
+        # 这样优化器就能更新 self.W 和 self.b
+        return [self.W, self.b]
+
+@d2l.add_to_class(SoftmaxRegressionScratch)  
+def forward(self, X):
+    # 1. 把输入 X reshape 成二维矩阵
+    #    -1 表示自动推算样本数 N
+    #    self.W.shape[0] = num_inputs
+    #    所以 reshape 后的形状是 (N, num_inputs)
+    X = X.reshape((-1, self.W.shape[0]))
+
+    # 2. 线性变换：XW + b
+    #    torch.matmul(X, self.W) → (N, num_outputs)
+    #    self.b 会自动广播成 (N, num_outputs)
+    logits = torch.matmul(X, self.W) + self.b
+
+    # 3. Softmax：把 logits 转换成概率分布
+    #    每一行的和为 1，表示每个样本属于各类别的概率
+    return softmax(logits)
+#一句话： 这个 forward 方法就是 Softmax 回归的核心：输入 → 线性变换 → Softmax → 输出概率分布
+----------------------------------------------------------------------------------------------
+4.4.3 The Cross-Entropy Loss
+y = torch.tensor([0, 2])  
+# 真实标签 y：共有两个样本
+# 第一个样本的真实类别是 0
+# 第二个样本的真实类别是 2
+
+y_hat = torch.tensor([[0.1, 0.3, 0.6],
+                      [0.3, 0.2, 0.5]])
+# y_hat：模型输出的预测概率分布 (2 个样本 × 3 个类别)
+# 第 1 行：第一个样本属于类别 0,1,2 的概率分别是 0.1, 0.3, 0.6
+# 第 2 行：第二个样本属于类别 0,1,2 的概率分别是 0.3, 0.2, 0.5
+
+y_hat[[0, 1], y]
+# 高级索引操作：
+# - 第一个样本 (索引 0)，真实类别是 y[0] = 0 → 取 y_hat[0, 0] = 0.1
+# - 第二个样本 (索引 1)，真实类别是 y[1] = 2 → 取 y_hat[1, 2] = 0.5
+# 结果：tensor([0.1, 0.5])
+
+def cross_entropy(y_hat, y):
+    # y_hat: 模型预测的概率分布，形状 (N, num_classes)
+    # y:     真实标签，形状 (N,)，每个元素是类别索引
+
+    # y_hat[list(range(len(y_hat))), y] 的含义：
+    # - list(range(len(y_hat))) = [0, 1, ..., N-1]，表示样本索引
+    # - y 表示每个样本的真实类别
+    # - 高级索引操作：取出每个样本在真实类别上的预测概率
+    #   例如：第 i 个样本 → y_hat[i, y[i]]
+
+    # torch.log(...)：对这些概率取对数
+    # -torch.log(...)：取负号，得到交叉熵的基本形式
+    # .mean()：对所有样本的损失取平均
+    return -torch.log(y_hat[list(range(len(y_hat))), y]).mean()
+
+# 调用函数，计算交叉熵损失
+cross_entropy(y_hat, y)  #tensor(1.4979)
+
+@d2l.add_to_class(SoftmaxRegressionScratch)
+def loss(self, y_hat, y):
+	return cross_entropy(y_hat, y)
+----------------------------------------------------------------------------------------------
+4.4.4 Training
+
+data = d2l.FashionMNIST(batch_size=256)  
+# 加载 Fashion-MNIST 数据集
+# - 每张图片是 28x28 的灰度图，共 10 个类别
+# - batch_size=256 表示每次迭代取 256 张图片作为一个小批量
+
+model = SoftmaxRegressionScratch(num_inputs=784, num_outputs=10, lr=0.1)  
+# 定义 Softmax 回归模型
+# - num_inputs=784：输入维度（28*28 展平成一维向量）
+# - num_outputs=10：输出类别数（10 种服饰类别）
+# - lr=0.1：学习率
+
+trainer = d2l.Trainer(max_epochs=10)  
+# 定义训练器
+# - max_epochs=10：训练 10 个完整的 epoch（即把训练集完整跑 10 遍）
+
+trainer.fit(model, data)  
+# 开始训练
+# - 从 data 中取出一个 batch (X, y)
+# - 调用 model.forward(X) 得到预测 y_hat
+# - 调用 model.loss(y_hat, y) 计算损失
+# - 反向传播并更新参数 (W, b)
+# - 重复上述过程，直到训练完成
+----------------------------------------------------------------------------------------------
+4.4.5 Prediction
+X, y = next(iter(data.val_dataloader()))
+preds = model(X).argmax(axis=1)
+preds.shape #torch.Size([256])
+
+# 找出预测错误的样本
+wrong = preds.type(y.dtype) != y  
+# preds.type(y.dtype)：把预测结果 preds 转换成和真实标签 y 相同的数据类型
+# != y：逐元素比较，得到布尔向量，True 表示预测错误
+# wrong 就是一个布尔掩码，标记哪些样本预测错误
+
+# 用布尔索引筛选出预测错误的样本
+X, y, preds = X[wrong], y[wrong], preds[wrong]  
+# X：错误样本的图像
+# y：错误样本的真实标签
+# preds：错误样本的预测标签
+
+# 生成可视化用的标签
+labels = [a+'\n'+b for a, b in zip(
+    data.text_labels(y), data.text_labels(preds))]  
+# data.text_labels(y)：把真实标签数字转成文字（如 0 → "T-shirt"）
+# data.text_labels(preds)：把预测标签数字转成文字
+# zip(...)：把真实标签和预测标签配对
+# a+'\n'+b：拼接成 "真实标签\n预测标签" 的形式
+# labels：字符串列表，用于可视化时显示在图片下方
+
+# 可视化错误分类的样本
+data.visualize([X, y], labels=labels)  
+# 显示错误分类的图像
+# 每张图像下方显示两行文字：
+# 第一行是真实类别
+# 第二行是预测类别
+----------------------------------------------------------------------------------------------
+4.5 Concise Implementation of Softmax Regression
+import torch
+from torch import nn
+from torch.nn import functional as F
+from d2l import torch as d2l
+----------------------------------------------------------------------------------------------
+4.5.1 Defining the Model
+class SoftmaxRegression(d2l.Classifier):  # @save
+    """The softmax regression model."""
+    # 定义一个 Softmax 回归模型类，继承自 d2l.Classifier
+    # @save 是 d2l 的标记，用来保存这个类，方便后续调用
+
+    def __init__(self, num_outputs, lr):
+        super().__init__()  
+        # 调用父类 d2l.Classifier 的初始化方法
+
+        self.save_hyperparameters()
+        # 保存超参数 (num_outputs, lr)，方便后续使用或可视化
+
+        # 定义网络结构   nn.Sequential 就是一个“顺序容器”，把层按顺序组合起来，让数据自动按顺序流过，写网络更简洁。
+        self.net = nn.Sequential(
+            nn.Flatten(),              # 把输入图像展平成一维向量 (例如 28x28 → 784)
+            nn.LazyLinear(num_outputs) # 全连接层，输出维度等于类别数
+                                       # LazyLinear 会在第一次看到输入时自动推断输入维度
+        )
+
+    def forward(self, X):
+        # 前向传播函数
+        # 输入 X (一批图像)，先展平，再经过线性层，输出 logits (未归一化的分数)
+        # 注意：这里没有显式写 softmax，因为交叉熵损失函数内部会自动处理
+        return self.net(X)
+----------------------------------------------------------------------------------------------
+4.5.2 Softmax Revisited
+
+@d2l.add_to_class(d2l.Classifier)  # @save
+def loss(self, Y_hat, Y, averaged=True):
+    # 定义分类器的损失函数 (交叉熵损失)
+    # Y_hat: 模型输出的预测值 (logits)，形状通常是 (batch_size, num_classes)
+    # Y:     真实标签，形状通常是 (batch_size,)
+    # averaged: 是否对所有样本的损失取平均，默认 True
+
+    # 将 Y_hat 重塑为二维张量，形状 (N, num_classes)
+    # -1 表示自动推断样本数 N
+    Y_hat = Y_hat.reshape((-1, Y_hat.shape[-1]))
+
+    # 将 Y 重塑为一维张量，形状 (N,)
+    Y = Y.reshape((-1,))
+
+    # 调用 PyTorch 内置的交叉熵函数 F.cross_entropy
+    # reduction 参数控制损失的聚合方式：
+    # - 'mean'：对所有样本的损失取平均 (默认)
+    # - 'none'：返回每个样本的损失，不做聚合
+    return F.cross_entropy(
+        Y_hat, Y, reduction='mean' if averaged else 'none'
+    )
+----------------------------------------------------------------------------------------------
+4.5.3 Training
+data = d2l.FashionMNIST(batch_size=256)
+model = SoftmaxRegression(num_outputs=10, lr=0.1)
+trainer = d2l.Trainer(max_epochs=10)
+trainer.fit(model, data)
+
+----------------------------------------------------------------------------------------------
+4.5.4 Summary
+高层 API 的特点
+- 优势：
+  * 简化模型设计，代码更简洁
+  * 屏蔽底层实现中的潜在风险（如数值稳定性问题）
+- 适用场景：
+  * 快速原型开发
+  * 初学者或需要快速实验时
+- 潜在不足：
+  * 过度抽象可能隐藏细节，用户不易察觉数值或实现上的问题
+
+【Generalization in Classification —— 分类中的泛化】
+- 框架的优点：
+  * 提高可访问性，减少手写代码量
+  * 提供现成模块，快速搭建模型
+- 框架的局限：
+  * 添加新组件或修改底层机制时可能受限
+  * 框架的“保护层”并不能覆盖所有情况
+- 学习建议：
+  * 既要掌握框架的高层用法，也要理解底层实现
+  * 这样才能在需要创新或突破框架限制时，有能力自己实现
+----------------------------------------------------------------------------------------------
+4.6 Generalization in Classification
+
+- 多分类问题：通过线性神经网络 + 多输出 + softmax 解决。
+- 输出解释为概率预测 → 引入交叉熵损失 (cross-entropy loss)。
+- 交叉熵损失：计算模型对真实标签分配的概率的负对数似然。
+- 训练目标：不仅在训练集上拟合，更要学到能推广到测试集的模式。
+- 高训练精度 ≠ 好的泛化能力。尤其在高维数据中，训练集往往可以被完全记忆。
+
+【关于记忆与泛化】
+- 单纯记忆训练数据无法解决新样本分类问题。
+- 没有泛化能力时，模型在新数据上可能退化为随机猜测。
+- 三个关键问题：
+  1. 需要多少测试样本才能可靠估计分类器的准确率？
+  2. 如果反复在同一测试集上评估，会发生什么？
+  3. 为什么线性模型在训练集上的拟合会比“记忆方案”更好？
+
+【统计学习理论与泛化】
+- 引入“泛化间隙 (generalization gap)”概念：经验误差与真实误差的差距。
+- 理论上：可以在训练前保证泛化，即给定任意上界 ε，存在所需样本数 n。
+- 若训练样本 ≥ n，则经验误差会在 ε 范围内逼近真实误差。
+- 适用于任意数据分布，但在深度学习中实际应用有限。
+- 原因：现代神经网络复杂度高、规模大，理论保证难以直接应用。
+----------------------------------------------------------------------------------------------
+4.6.1 The Test Set
+- 测试集是评估泛化误差的“金标准”。
+- 定义：给定一个固定分类器 f 和未参与训练的新数据集 D = {(x^(i), y^(i))}, 
+  经验误差 (empirical error) 定义为：
+  ε_D(f) = (1/n) Σ 1(f(x^(i)) ≠ y^(i))
+- 含义：经验误差是分类器在测试集上的错误率。
+- 对比：总体误差 (population error) 是在真实分布 P(X,Y) 下的期望错误率。
+
+【总体误差与估计】
+- 总体误差：ε(f) = E_{(x,y)~D}[1(f(x) ≠ y)] = ∬ 1(f(x) ≠ y) p(x,y) dxdy
+- 无法直接计算，只能通过样本估计。
+- 测试集 D 可视为总体的代表，因此 ε_D(f) 是 ε(f) 的统计估计量。
+- 中心极限定理 (CLT)：样本均值近似服从正态分布，标准差 ~ σ/√n。
+- 推论：估计误差的精度提升需要大量样本。
+  * 精度提高一倍 → 样本量需增加 4 倍
+  * 精度提高 100 倍 → 样本量需增加 10000 倍
+
+【经验误差的方差】
+- ε_D(f) 是 ε(f) 的无偏估计。
+- 方差：Var[ε_D(f)] = ε(f)(1 - ε(f)) ≤ 1/4
+- 标准差：≤ √(0.25/n)
+- 实际意义：
+  * 要在 95% 置信度下达到 ±0.01 的区间，需要约 2500 个样本
+  * 若要求更严格 (±0.01 且 2σ)，则需要约 10000 个样本
+
+【Hoeffding 不等式】
+- 提供有限样本下的概率界：
+  P(|ε_D(f) - ε(f)| ≥ ε) < exp(-2nε²)
+- 意义：在有限样本下也能给出泛化误差的置信界。
+- 实例：要达到 95% 置信度，所需样本量约 15000，比渐近分析的 10000 更保守
+----------------------------------------------------------------------------------------------
+4.6.2 Test Set Reuse
+1. 数据集划分
+   - 训练集 (training set): 用于模型参数学习。
+   - 验证集 (validation set): 用于模型选择、超参数调优，避免直接在测试集上调参。
+   - 测试集 (test set): 仅用于最终评估，给出模型泛化误差的无偏估计。
+
+2. 模型选择
+   - 给定多个候选模型 f1, f2, ..., fm。
+   - 在验证集上比较性能，选择验证误差最小的模型。
+   - 注意：不能频繁使用测试集来比较模型，否则会导致“测试集过拟合”。
+
+3. 过拟合问题
+   - 训练集过拟合：模型在训练集表现好，但泛化差。
+   - 验证集过拟合：如果不断在验证集上调参，最终也可能对验证集过拟合。
+   - 解决方法：保留独立的测试集，仅在最终阶段使用。
+
+4. 统计显著性与假设检验
+   - 对于固定分类器 f，可以估计其测试误差 ε(f)。
+   - 但要小心：当比较多个模型时，可能出现“假阳性发现”(false discovery)。
+   - 需要进行多重假设检验 (multiple hypothesis testing)，否则容易高估模型改进。
+
+5. 置信区间与误差估计
+   - 常见形式：ε(f) ∈ ε(f*) ± δ
+   - 表示模型 f 的误差与基准模型 f* 的误差差异在 δ 范围内。
+   - 数据集越小，置信区间越宽，需要更谨慎的统计分析。
+
+6. 自适应过拟合 (adaptive overfitting)
+   - 当研究者不断尝试新模型并在同一测试集上评估时，测试集本身会“泄漏”信息。
+   - 结果：测试集不再是无偏估计，导致过度乐观的结论。
+   - 建议：在高风险、小数据集场景下，更严格地控制实验流程。
+
+7. 实践建议
+   - 始终区分训练/验证/测试集。
+   - 避免频繁使用测试集做模型选择。
+   - 报告结果时，附带置信区间和统计显著性检验。
+   - 当数据有限时，考虑交叉验证 (cross-validation)
+----------------------------------------------------------------------------------------------
+4.6.3 Statistical Learning Theory
+1. 背景问题
+   - 我们训练模型时，只能看到有限的训练数据。
+   - 但我们真正关心的是模型在“总体分布”上的表现 (泛化能力)。
+   - 问题：训练误差 (empirical error) 和真实误差 (true error) 之间差多少？
+
+2. 经验误差 vs. 真实误差
+   - 经验误差 ε_S(f): 模型 f 在训练集 S 上的平均错误率。
+   - 真实误差 ε(f): 模型 f 在真实数据分布上的错误率。
+   - 统计学习理论的目标：建立数学工具来“界定”两者之间的差距。
+
+3. 泛化间隙 (generalization gap)
+   - 定义：ε(f) - ε_S(f)
+   - 希望证明：随着样本数 n 增加，这个差距会越来越小。
+
+4. 一致收敛 (uniform convergence)
+   - 不仅要保证某个模型 f 的经验误差接近真实误差，
+   - 还要保证在整个模型类 F 中，所有 f 的经验误差都同时接近真实误差。
+   - 数学形式：以高概率 (1 - δ)，对所有 f ∈ F，|ε(f) - ε_S(f)| ≤ α。
+
+5. VC 维 (Vapnik–Chervonenkis dimension)
+   - 衡量模型类复杂度的指标。
+   - VC 维越大，模型越灵活，需要更多样本才能保证泛化。
+   - 例子：d 维输入的线性模型，VC 维 = d + 1。
+
+6. 泛化误差界 (generalization bound)
+   - 常见形式：
+     P( |ε(f) - ε_S(f)| < α ) ≥ 1 - δ
+     其中 α ≈ √(VC / n)
+   - 含义：样本数 n 越大，泛化误差界越小，模型越可靠。
+
+7. 实际意义
+   - 提供了“理论保证”：只要数据足够多，经验误差能代表真实误差。
+   - 解释了为什么复杂模型需要更多数据。
+   - 指导我们在模型选择时考虑“复杂度 vs. 数据量”的平衡。
+----------------------------------------------------------------------------------------------
+4.6.4 Summary
+1. 测试集的重要性
+   - 测试集用于给出模型在真实分布上的无偏估计。
+   - 评估结果通常伴随置信区间 (confidence interval)，可以基于大样本近似或有限样本推导。
+
+2. 收敛速率
+   - 随着测试集规模 n 增大，误差估计的置信区间宽度以 O(1/√n) 的速率收缩。
+   - 数据越多，估计越可靠。
+
+3. 实际问题
+   - 测试集往往被多次使用，导致“测试集不再是真正的测试集”。
+   - 多次使用会引入偏差，甚至出现 false discovery。
+
+4. 实践建议
+   - 尽量保留真正未见过的数据作为最终测试集。
+   - 如果可能，准备多个独立测试集。
+   - 在报告结果时要保守，避免过度解读小的性能差异。
+----------------------------------------------------------------------------------------------
+4.7 Environment and Distribution Shift
+by introducing our model-based decisions to the environment, we might break the model.
+
+----------------------------------------------------------------------------------------------
+4.7.1 Types of Distribution Shift
+1. 分布偏移 (Distribution Shift)
+   - 定义：训练数据分布 p_S(x, y) 与测试数据分布 p_T(x, y) 不一致。
+   - 问题：如果不对分布关系做任何假设，学习一个鲁棒分类器几乎不可能。
+
+2. Covariate Shift (协变量偏移)
+   - 定义：输入分布 P(x) 改变，但条件分布 P(y | x) 保持不变。
+   - 例子：训练集是猫狗照片，测试集是猫狗卡通画。
+   - 含义：模型仍然可以学习，但需要方法来校正输入分布的差异。
+输入分布变了，但“猫长什么样、狗长什么样”的规律没变
+
+3. Label Shift (标签偏移)
+   - 定义：标签分布 P(y) 改变，但类条件分布 P(x | y) 保持不变。
+   - 例子：医学诊断中，疾病的流行率随时间或地区变化，但症状模式不变。
+例如：训练时猫狗各一半，模型学会了“平衡预测”；但测试时猫占 90%，如果不调整，预测会偏差很大
+   - 特点：常见于类别比例发生变化的场景。
+类别比例变了，但类别本身的特征没变。
+
+4. Concept Shift (概念偏移)
+   - 定义：标签的定义或含义随时间/地区/文化发生变化。
+   - 例子：
+     - 精神疾病的诊断标准随时间更新。
+     - 时尚潮流、职位名称的变化。
+     - 地区差异：美国不同地区对“汽水”的称呼不同。
+   - 本质：P(y | x) 本身发生了变化。
+
+   - Covariate Shift：P(x) 变，P(y|x) 不变。
+   - Label Shift：P(y) 变，P(x|y) 不变。
+   - Concept Shift：P(y|x) 本身变了（最根本的变化）。
+   - 因此 Concept Shift 是最难处理的一类分布偏移
+
+5. 实际挑战
+   - 分布偏移可能是时间上的 (temporal shift)，也可能是地理上的 (geographic shift)。
+   - 例如：机器翻译系统在不同地区，P(y | x) 可能不同。
+   - 检测分布偏移往往很困难，但理解这些类型有助于模型适应新领域。
+----------------------------------------------------------------------------------------------
+4.7.2 Examples of Distribution Shift	
+1. 医学诊断 (Medical Diagnostics)
+   - 训练数据：从健康人和病人采集的样本。
+   - 问题：真实应用中的人群分布与训练数据不同。
+   - 结果：模型在实验室表现很好，但在实际环境中准确率下降。
+   - 典型原因：采样偏差 → 极端的协变量偏移 (covariate shift)。
+
+2. 血液检测案例
+   - 初创公司用健康人 vs 病人血样训练模型。
+   - 但两组人群在年龄、激素水平、饮食、运动习惯等方面差异巨大。
+   - 这些差异与疾病无关，却导致模型学到“错误的规律”。
+   - 结论：模型在真实环境中失效。
+
+3. 自动驾驶 (Self-Driving Cars)
+   - 公司用游戏引擎生成合成训练数据。
+   - 问题：合成图像的路边纹理过于简单，与真实世界差异大。
+   - 结果：模型在真实道路上表现差。
+   - 类似案例：美军坦克识别实验，模型学到的是“阴影差异”，而不是“坦克特征”。
+
+4. 非平稳分布 (Nonstationary Distributions)
+   - 数据分布随时间缓慢变化，但模型未及时更新。
+   - 例子：
+     - 广告推荐：未考虑新设备（如 iPad）的出现。
+     - 垃圾邮件过滤：垃圾邮件样式不断演化，旧模型逐渐失效。
+   - 结论：需要持续更新模型以适应新分布。
+
+5. 更多案例 (More Anecdotes)
+   - 推荐系统：圣诞节后仍然推荐圣诞帽。
+   - 人脸检测：训练集是远景，测试集是近景 → 模型失效。
+   - 搜索引擎：在美国训练，直接部署到英国 → 语境不符。
+   - 图像分类：训练集类别均衡，现实世界类别分布极不均衡 → 模型偏差。
+
+这一节通过多个真实案例说明：分布偏移无处不在，如果忽视它，模型在真实世界中往往会彻底失效。
+----------------------------------------------------------------------------------------------
+4.7.3 Correction of Distribution Shift
+Dive into Deep Learning - 4.7.3 Correction of Distribution Shift 笔记
+
+1. Empirical Risk vs. True Risk
+   - 经验风险 (empirical risk): 在训练数据上的平均损失
+     R_emp(f) = (1/n) Σ L(f(x_i), y_i)
+   - 真实风险 (true risk): 在真实分布上的期望损失
+     R(f) = E_{p(x,y)}[L(f(x), y)]
+   - 问题：当训练分布 q(x,y) ≠ 测试分布 p(x,y) 时，直接最小化经验风险会产生偏差。
+
+2. Covariate Shift Correction (协变量偏移校正)
+   - 假设：p(y|x) = q(y|x)，但 p(x) ≠ q(x)。
+   - 恒等式：
+     ∫∫ f(x,y) p(y|x)p(x) dxdy
+     = ∫∫ f(x,y) q(y|x)q(x) [p(x)/q(x)] dxdy
+   - 方法：对训练样本加权
+     β_i = p(x_i)/q(x_i)
+   - 加权经验风险最小化：
+     min_f (1/n) Σ β_i L(f(x_i), y_i)
+   - 权重估计方法：
+     * 训练一个二分类器区分源分布 q 与目标分布 p
+     * 若 P(z=1|x) = 1/(1+exp(-h(x)))，则 β(x) = exp(h(x))
+     * 实际中常裁剪权重 β(x) = min(exp(h(x)), c)
+
+3. Label Shift Correction (标签偏移校正)
+   - 假设：q(x|y) = p(x|y)，但 q(y) ≠ p(y)。
+   - 恒等式：
+     ∫∫ L(f(x),y) q(x,y) dxdy
+     = ∫∫ L(f(x),y) q(x|y)q(y)[p(y)/q(y)] dxdy
+   - 方法：对样本按类别加权
+     β_i = p(y_i)/q(y_i)
+   - 估计 p(y) 的方法：
+     * 用源域分类器得到混淆矩阵 C
+     * 统计预测分布 q
+     * 解线性系统 p(y) = C^{-1} q
+     * 再计算类别权重 β_i
+
+4. Concept Shift Correction (概念偏移校正)
+   - 假设：P(y|x) 本身发生变化。
+   - 特点：最根本的分布偏移，简单加权无法修复。
+   - 方法：
+     * 持续学习 (continual learning)，在新数据上微调模型
+     * 重新收集数据，更新标签定义
+     * 建立分布漂移监控，触发再训练
+
+5. 小结
+   - 协变量偏移：输入分布变，关系不变 → 用密度比加权
+   - 标签偏移：类别比例变，类内模式不变 → 用类别比率加权
+   - 概念偏移：关系本身变 → 需微调或再训练
+   - 注意事项：
+     * 权重估计需足够样本
+     * 加权可能导致方差大 → 需裁剪或正则化
+     * 校正后需独立验证集评估效果
+----------------------------------------------------------------------------------------------
+4.7.4 A Taxonomy of Learning Problems
+Dive into Deep Learning - Batch vs. Online Learning & Beyond 笔记
+
+1. Batch Learning (批量学习)
+   - 模型一次性获取完整训练集 {(x1,y1), …, (xn,yn)}。
+   - 假设数据来自同一分布。
+   - 常见于监督学习，训练完成后模型固定，不再更新。
+   - 部署方式：通常安装在用户设备上，不再迭代。
+
+2. Online Learning (在线学习)
+   - 数据逐个到达 (xt, yt)，模型需即时预测。
+   - 预测后才获得真实标签 yt，并计算损失 ℓt。
+   - 模型随时间不断更新：f_t → 预测 → 损失 → f_{t+1}。
+   - 应用场景：股价预测、广告推荐、实时交互系统。
+   - 特点：持续改进，适应数据流。
+
+3. Bandits (多臂老虎机问题)
+   - 在线学习的特例：在有限动作集合中选择。
+   - 挑战：探索 (exploration) vs. 利用 (exploitation)。
+   - 应用：广告投放、推荐系统、临床试验。
+
+4. Control (控制)
+   - 环境可能记住过去的动作，影响未来状态。
+   - 例子：咖啡机温控器，需考虑历史使用情况。
+   - 与控制理论相关（如 PID 控制器）。
+   - 在生成模型中也有应用：调节环境以改善生成质量。
+
+5. Reinforcement Learning (强化学习)
+   - 智能体与环境交互，目标是学习最优策略。
+   - 典型任务：Chess, Go, Backgammon, StarCraft。
+   - 应用：自动驾驶控制器、机器人决策。
+   - 特点：奖励信号稀疏，需长期规划。
+
+6. Considering the Environment (考虑环境)
+   - 策略效果依赖环境特性。
+   - 稳定环境：策略长期有效。
+   - 动态环境：策略可能很快过时。
+   - 环境变化的速度和方式决定了可用算法类型。
+----------------------------------------------------------------------------------------------
+4.7.5 Fairness, Accountability, and Transparency in Machine Learning
+Dive into Deep Learning - 4.7.5 公平性、责任与透明性 (FAT) 笔记
+
+1. 部署机器学习系统的本质
+   - 不仅是预测模型，而是决策工具。
+   - 系统可能部分或完全自动化决策，直接影响个人生活。
+   - 从“预测”到“决策”的转变带来了新的技术与伦理问题。
+
+2. 医疗与诊断系统
+   - 高准确率很重要，但错误预测可能造成严重后果。
+   - 医疗应用中，公平性与责任尤为关键。
+
+3. 偏差与反馈循环 (Bias & Feedback Loops)
+   - 预测性警务 (predictive policing) 案例：
+     1) 犯罪率高的社区 → 更多警力巡逻。
+     2) 发现更多犯罪 → 数据进入训练集。
+     3) 模型预测该社区更危险 → 下一轮分配更多警力。
+     4) 形成“自我强化”的恶性循环。
+   - 结果：加剧社会不平等，模型偏差被放大。
+
+4. Runaway Feedback Loops (失控反馈环)
+   - 模型预测与训练数据耦合，未被建模考虑。
+   - 导致预测结果不断强化原有偏差。
+   - 例子：社交媒体推荐系统 → 用户点击行为 → 模型推荐更极端内容。
+
+5. 信息传播与社会影响
+   - 算法在信息分发中扮演巨大角色。
+   - 例子：Facebook 的“点赞”决定用户看到的新闻 → 可能影响舆论与社会认知。
+   - 提醒：要思考我们是否在解决“正确的问题”。
+
+6. 总结
+   - 机器学习系统不仅是技术问题，更是社会问题。
+   - 需要关注：
+     * 公平性 (Fairness)：避免歧视与偏差。
+     * 责任 (Accountability)：谁对模型决策负责。
+     * 透明性 (Transparency)：模型如何做出决策，是否可解释。
+这一节强调：机器学习系统在现实中会影响人类社会，必须考虑公平性、责任和透明性，否则容易陷入偏差放大与伦理困境。
+----------------------------------------------------------------------------------------------
+4.7.6 Summary
+1. 分布偏移 (Distribution Shift)
+   - 训练集和测试集往往不来自同一分布。
+   - 这会导致模型在测试时表现下降。
+
+2. 风险与经验风险
+   - 风险 (Risk)：真实分布下的期望损失。
+   - 经验风险 (Empirical Risk)：训练数据上的平均损失，用来近似真实风险。
+   - 实际中我们执行经验风险最小化 (ERM)。
+
+3. 偏移的类型与校正
+   - 协变量偏移 (Covariate Shift) 和 标签偏移 (Label Shift) 在一定假设下可被检测并在测试时校正。
+   - 如果忽视这些偏移，测试时可能出现严重问题。
+
+4. 环境与反馈
+   - 在某些场景下，环境会“记住”模型的自动化行为，并以意想不到的方式做出反应。
+   - 例如：推荐系统、预测性警务等，可能形成反馈循环。
+   - 因此需要在部署后持续监控模型与环境的交互。
+
+5. 总结
+   - 分布偏移是机器学习部署中的常见挑战。
+   - 需要识别、校正，并在实际系统中保持警惕。
+   - 模型与环境可能相互影响，必须考虑长期动态。
+----------------------------------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

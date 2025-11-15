@@ -1,0 +1,929 @@
+1.In the terminology of machine learning, the dataset is called a training dataset or training set, and each row (containing the data corresponding to one sale) is called an example (or data point, instance, sample). The thing we are trying to predict (price) is called a label (or target). The variables (age and area) upon which the predictions are based are called features (or covariates).
+
+%matplotlib inline
+import math
+import time
+import numpy as np
+mport torch
+from d2l import torch as d2l
+----------------------------------------------------------------------------------------------
+C1：Basics
+（I）Model
+we will need two more things: (i) a measure of the quality of some given model; and (ii) a procedure for updating the model to improve its quality
+（II）Loss Function
+ For regression problems, the most common loss function is the squared error.
+（III）Analytic Solution
+Although analytic solutions allow for nice mathematical analysis, the requirement of an analytic solution is so restrictive that it would exclude almost all exciting aspects of deep learning.
+（IV）Minibatch Stochastic Gradient Descent（小批量随机梯度下降）
+	(i) initialize the values of the model parameters, typically at random; (ii) iteratively sample random minibatches from the data,updating the parameters in the direction of the negative gradient.
+1. 初始化参数
+   - 随机初始化模型参数 w（或 θ）。
+   - 设置学习率 η（step size）。
+2. 数据划分
+   - 将训练数据集分成若干小批量（mini-batches），
+     每个批量包含 b 个样本（通常 b = 32, 64, 128）。
+3. 迭代训练
+   对于每一轮（epoch）：
+   (a) 打乱训练数据（shuffle），避免顺序偏差。
+   (b) 依次取出一个 mini-batch：
+       i. 前向传播：计算预测值和损失函数 L(w)。
+       ii. 反向传播：计算该 mini-batch 上的梯度 ∇L(w)。
+       iii. 参数更新： 
+            w ← w - η * ∇L(w)
+4. 重复
+   - 持续多轮迭代，直到：
+     * 达到设定的 epoch 数，或
+     * 损失函数收敛 / 验证集误差不再下降。
+5. 特点
+   - 相比全量梯度下降（Batch GD）：更快，每次只用一部分数据。
+   - 相比纯随机梯度下降（SGD, 每次只用 1 个样本）：更稳定，梯度估计方差更小。
+   - 在效率和稳定性之间取得平衡。
+6. 常见改进
+   - 动量 (Momentum)：加速收敛，减少震荡。
+   - 自适应学习率 (AdaGrad, RMSProp, Adam)：自动调整 η。
+   - 学习率衰减 (Learning rate decay)：训练后期逐渐减小 η。
+（V）Predictions
+----------------------------------------------------------------------------------------------
+C2：Vectorization for Speed 向量化提速
+1. 背景
+   - 在数值计算中，逐元素的 for 循环效率很低。
+   - 向量化操作利用底层的 C/Fortran 实现和并行计算，速度远快于 Python 循环。
+2. 实验代码
+   n = 10000
+   a = torch.ones(n)
+   b = torch.ones(n)
+   c = torch.zeros(n)
+
+   # 循环实现
+   t = time.time()
+   for i in range(n):
+       c[i] = a[i] + b[i]
+   f'{time.time() - t:.5f} sec'   # 约 0.17802 秒
+
+   # 向量化实现
+   t = time.time()
+   d = a + b
+   f'{time.time() - t:.5f} sec'   # 约 0.00036 秒
+
+3. 对比结果
+   - 循环实现：0.178 秒
+   - 向量化实现：0.00036 秒
+   - 提速比：约 500 倍
+4. 原因
+   - Python for 循环逐元素操作，开销大。
+   - 向量化操作调用底层高效的并行库（BLAS、MKL、CUDA 等）。
+   - GPU/CPU 都能利用 SIMD（单指令多数据）加速。
+5. 总结
+   - **能向量化就不要写循环**。
+   - 在深度学习中，矩阵/向量运算是核心，向量化能显著提升训练速度。
+   - 常见向量化操作：矩阵乘法、逐元素加减乘除、广播 (broadcasting)。
+----------------------------------------------------------------------------------------------
+C3：The Normal Distribution and Squared Loss
+
+def normal(x, mu, sigma):#正态分布函数
+	p = 1 / math.sqrt(2 * math.pi * sigma**2)
+	return p * np.exp(-0.5 * (x - mu)**2 / sigma**2)
+
+# Use NumPy again for visualization
+x = np.arange(-7, 7, 0.01)
+# Mean and standard deviation pairs
+params = [(0, 1), (0, 2), (3, 1)]
+d2l.plot(x, [normal(x, mu, sigma) for mu, sigma in params], xlabel='x',
+		ylabel='p(x)', figsize=(4.5, 2.5),
+		legend=[f'mean {mu}, std {sigma}' for mu, sigma in params])
+1. 背景
+   - 在回归问题中，我们常用平方损失：
+     L(y, ŷ) = (y - ŷ)^2
+   - 这并不是随便选的，而是和正态分布假设紧密相关。
+
+2. 正态分布假设
+   - 假设观测数据 y 来源于模型预测 ŷ 加上高斯噪声 ε：
+     y = ŷ + ε,   其中 ε ~ N(0, σ²)
+   - 即：P(y | ŷ) = N(y; ŷ, σ²)
+
+3. 最大似然推导
+   - 对数似然函数：
+     log P(y | ŷ) = - (1 / (2σ²)) (y - ŷ)^2 + 常数
+   - 最大化似然 ⇔ 最小化平方误差 (y - ŷ)^2
+   - 因此，平方损失正是高斯噪声假设下的最大似然估计。
+
+4. 启示
+   - 使用平方损失 = 假设误差服从正态分布。
+   - 如果误差分布不是高斯（例如重尾分布），平方损失可能不是最优选择。
+   - 其他分布假设会对应不同的损失函数：
+     * Laplace 分布 → 绝对值损失 (L1 loss)
+     * Bernoulli 分布 → 交叉熵损失 (cross-entropy)
+
+5. 小结
+   - 平方损失的合理性来自统计学：它对应高斯噪声模型。
+   - 这解释了为什么平方损失在回归问题中如此常见。
+----------------------------------------------------------------------------------------------
+C4：Linear Regression as a Neural Network
+线性回归可以被视为一个最简单的神经网络——只有输入层和输出层，没有激活函数也没有隐藏层
+   - 可以将线性回归看作一个最简单的神经网络：
+     * 输入层：d 个节点（特征）
+     * 输出层：1 个节点（预测值）
+     * 权重连接：每个输入连接到输出，权重为 \( w_i \)，偏置为 \( b \)
+（I）Biology
+consisting of dendrites (input terminals), the nucleus (CPU), the axon (output wire), and the axon terminals (output terminals), enabling connections to other neurons via synapses.
+1. 生物神经元结构
+   - 输入端：树突（dendrites），接收其他神经元或感官信号。
+   - 中心处理：细胞体（cell body）和细胞核（nucleus）。
+   - 输出端：轴突（axon）和轴突末端（axon terminals），将信号传递给其他神经元。
+   - 信号通过突触（synapse）连接传播。
+2. 人工神经元的计算模型
+   - 输入：来自其他神经元或传感器的值 x₁, x₂, ..., xₙ
+   - 权重：每个输入对应一个权重 w₁, w₂, ..., wₙ，表示其影响程度（激活或抑制）
+   - 偏置项：b，用于调整激活阈值
+   - 总输入：z = x₁w₁ + x₂w₂ + ... + xₙwₙ + b，或简写为 z = ∑ xᵢwᵢ + b
+   - 激活函数：σ(z)，决定输出是否激活（如 sigmoid、ReLU 等）
+3. 信息处理流程
+   - 接收输入 → 加权求和 → 加上偏置 → 通过激活函数 → 输出结果
+   - 这个过程模拟了生物神经元的“接收 → 整合 → 触发”机制
+4. 灵感 vs 工程实现
+   - 神经网络受生物神经系统启发，但并不完全复制其机制
+   - 类比：飞行器受鸟类启发，但航空工程不依赖鸟类解剖学（Russell & Norvig, 2016）
+5. 小结
+   - 人工神经元是对生物神经元的抽象建模
+   - 核心计算是：加权求和 + 激活函数
+   - 网络结构通过连接多个神经元，形成复杂的非线性映射能力
+----------------------------------------------------------------------------------------------
+C5：总结
+1. 目标函数
+   - 线性模型通过最小化训练集上的平方损失来选择参数：
+     L(w) = ∑ (yᵢ - wᵀxᵢ)²
+
+2. 统计解释
+   - 线性回归可视为最大似然估计（MLE）：
+     * 假设误差服从高斯分布
+     * 模型为：y = wᵀx + ε，ε ~ N(0, σ²)
+     * 最大化似然 ⇔ 最小化平方损失
+
+3. 神经网络表示
+   - 线性模型可表示为一个简单的神经网络：
+     * 输入层：特征 x
+     * 输出层：线性组合 wᵀx + b
+     * 无隐藏层、无激活函数
+
+4. 计算特性
+   - 参数形式是可微的（parametric & differentiable）
+   - 可通过小批量随机梯度下降（mini-batch SGD）进行优化
+   - 支持高效的向量化计算和自动微分
+
+5. 泛化能力
+   - 虽然线性模型结构简单，但它引入了深度学习的核心组件：
+     * 参数化模型
+     * 可微损失函数
+     * 梯度优化机制
+     * 泛化到未见数据的能力
+
+6. 小结
+   - 线性模型是深度学习的起点，奠定了后续复杂模型的基础。
+   - 它连接了统计建模、神经网络结构和优化方法三者之间的桥梁。
+----------------------------------------------------------------------------------------------
+2.Object-Oriented Design for Implementation 面向对象设计实现
+In our introduction to linear regression, we walked through various components including
+the data,
+the model, 
+the loss function,
+the optimization algorithm.
+
+open-source libraries：
+(i) Module contains models, losses, and optimization methods;
+(ii)DataModule provides data loaders for training and validation; 
+(iii) both classes are combined using the Trainer class, which allows us to train models on a variety of hardware platforms.
+----------------------------------------------------------------------------------------------
+C1：Utilities
+1. 背景
+   - 在 Jupyter Notebook 或教学环境中，类和函数往往需要分块实现。
+   - 为了避免重复代码、提升可读性，引入一些工具函数和基类。
+
+2. 核心工具
+   (a) add_to_class
+       - 功能：在类定义完成后，动态地给类添加方法。
+       - 用法：通过装饰器形式，把函数注册为类的方法。
+       - 好处：允许在 Notebook 中分块实现类，便于教学和调试。
+@add_to_class(A)
+def do(self):
+	print('Class attribute "b" is', self.b)
+a.do()
+   (b) HyperParameters 基类
+       - 功能：自动保存构造函数中的参数为类属性。
+       - 用法：在 __init__ 中调用 self.save_hyperparameters()。
+       - 好处：避免手动写 self.a = a, self.b = b 这种重复赋值。
+       - 常用于模型类、可视化类等，统一管理超参数。
+# Call the fully implemented HyperParameters class saved in d2l
+class B(d2l.HyperParameters):
+	def __init__(self, a, b, c):
+		self.save_hyperparameters(ignore=['c'])
+		print('self.a =', self.a, 'self.b =', self.b)
+		print('There is no self.c =', not hasattr(self, 'c'))
+b = B(a=1, b=2, c=3)
+3. 应用场景
+   - 模型实现：减少样板代码，专注于核心逻辑。
+   - 可视化工具：如 ProgressBoard，直接继承 HyperParameters，参数自动保存。
+   - 教学/实验：分块实现类定义，代码更清晰。
+
+4. 小结
+   - Utilities 提供了“元编程”式的便利工具。
+   - 核心思想：**减少重复、提升可维护性、支持 Notebook 式分块实现**。
+----------------------------------------------------------------------------------------------
+C2：Models
+class Module(nn.Module, d2l.HyperParameters):  # 继承 PyTorch 的 nn.Module 和 d2l 的超参数基类
+    """The base class of models."""  # 模型的基类说明文档字符串
+    def __init__(self, plot_train_per_epoch=2, plot_valid_per_epoch=1):  
+        # 初始化方法，定义训练和验证时绘图的频率
+        super().__init__()  # 调用 nn.Module 的初始化方法，确保父类正确初始化
+        self.save_hyperparameters()  # 自动保存构造函数中的参数为类属性（来自 d2l.HyperParameters）
+        self.board = ProgressBoard()  # 创建一个绘图板对象，用于可视化训练/验证过程
+    
+    def loss(self, y_hat, y):  
+        # 定义损失函数接口，子类必须实现具体的损失函数
+        raise NotImplementedError  # 如果子类没实现会报错，强制要求子类重写
+    
+    def forward(self, X):  
+        # 前向传播函数，定义输入 X 如何经过网络得到输出
+        assert hasattr(self, 'net'), 'Neural network is defined'  
+        # 确保子类已经定义了 self.net 属性，否则报错
+        return self.net(X)  # 调用子类定义的网络结构进行前向计算
+    
+    def plot(self, key, value, train):  
+        """Plot a point in animation."""  # 绘制训练或验证过程中的指标点
+        assert hasattr(self, 'trainer'), 'Trainer is not inited'  
+        # 确保已经有 trainer 对象，否则无法绘图
+        self.board.xlabel = 'epoch'  # 横坐标设置为 epoch
+        
+        if train:  # 如果是训练集
+            x = self.trainer.train_batch_idx / \
+                self.trainer.num_train_batches  
+            # 横坐标：当前 batch 在 epoch 中的位置（归一化到 [0,1]）
+            n = self.trainer.num_train_batches / \
+                self.plot_train_per_epoch  
+            # 控制绘制频率：每多少个 batch 绘制一次
+        else:  # 如果是验证集
+            x = self.trainer.epoch + 1  
+            # 横坐标：当前 epoch 数（验证通常按 epoch 统计）
+            n = self.trainer.num_val_batches / \
+                self.plot_valid_per_epoch  
+            # 控制绘制频率：每多少个验证 batch 绘制一次
+        
+        self.board.draw(x, value.to(d2l.cpu()).detach().numpy(),  
+                        # 将张量转到 CPU，detach 去掉梯度，再转为 numpy，便于绘图
+                        ('train_' if train else 'val_') + key,  
+                        # 曲线的名字：train_loss 或 val_loss
+                        every_n=int(n))  # 每 n 个点绘制一次，避免太密集
+
+    def training_step(self, batch):  
+        # 定义单个 batch 的训练逻辑
+        l = self.loss(self(*batch[:-1]), batch[-1])  
+        # 前向传播：self(*batch[:-1]) 调用 forward 得到预测值
+        # 计算损失：预测值 vs 标签（batch[-1]）
+        self.plot('loss', l, train=True)  
+        # 绘制训练损失曲线
+        return l  # 返回损失，供优化器反向传播使用
+
+    def validation_step(self, batch):  
+        # 定义单个 batch 的验证逻辑
+        l = self.loss(self(*batch[:-1]), batch[-1])  
+        # 前向传播并计算损失
+        self.plot('loss', l, train=False)  
+        # 绘制验证损失曲线（不返回，因为验证不做反向传播）
+
+    def configure_optimizers(self):  
+        # 定义优化器接口，子类必须实现
+        raise NotImplementedError  
+        # 如果子类没实现会报错，强制要求子类指定优化器（如 SGD, Adam）
+----------------------------------------------------------------------------------------------
+C3：Data
+class DataModule(d2l.HyperParameters): #@save
+	"""The base class of data."""
+	def __init__(self, root='../data', num_workers=4):
+		self.save_hyperparameters()
+	def get_dataloader(self, train):
+		raise NotImplementedError
+	def train_dataloader(self):
+		return self.get_dataloader(train=True)
+	def val_dataloader(self):
+		return self.get_dataloader(train=False)
+1. 背景
+   - 在深度学习训练中，数据处理是关键环节。
+   - 为了让训练器和模型与数据解耦，引入 DataModule 基类。
+   - 作用：统一封装数据的下载、预处理、划分和加载逻辑。
+
+2. DataModule 类
+   - 继承自 d2l.HyperParameters，构造函数参数会自动保存为类属性。
+   - 初始化参数：
+     * root='./data'：数据存放路径
+     * num_workers=4：加载数据时的并行线程数
+
+3. 核心方法
+   (a) get_dataloader(self, train)
+       - 抽象方法，子类必须实现
+       - 根据 train=True/False 返回训练集或验证集的 DataLoader
+
+   (b) train_dataloader(self)
+       - 返回训练集 DataLoader
+       - 内部调用 get_dataloader(train=True)
+
+   (c) val_dataloader(self)
+       - 返回验证集 DataLoader
+       - 内部调用 get_dataloader(train=False)
+
+4. 与 Module 的关系
+   - Module 中的 training_step / validation_step 需要从 DataModule 提供的 DataLoader 中取数据。
+   - 这样训练循环只需调用标准接口，而不用关心数据细节。
+
+5. 小结
+   - DataModule 是数据处理的基类。
+   - 子类只需实现 get_dataloader，就能让训练器自动获取训练/验证数据。
+   - 优点：结构清晰、可复用、与模型逻辑解耦。
+----------------------------------------------------------------------------------------------
+C4：Training
+class Trainer(d2l.HyperParameters): #@save  
+    """The base class for training models with data."""  # 训练器基类，用于管理训练流程
+    
+    def __init__(self, max_epochs, num_gpus=0, gradient_clip_val=0):
+        self.save_hyperparameters()  
+        # 自动保存构造函数参数为类属性：max_epochs, num_gpus, gradient_clip_val
+        assert num_gpus == 0, 'No GPU support yet'  
+        # 当前实现不支持 GPU，强制检查 num_gpus 必须为 0
+    
+    def prepare_data(self, data):
+        self.train_dataloader = data.train_dataloader()  
+        # 获取训练集 DataLoader
+        self.val_dataloader = data.val_dataloader()  
+        # 获取验证集 DataLoader（可能为 None）
+        self.num_train_batches = len(self.train_dataloader)  
+        # 训练集 batch 总数
+        self.num_val_batches = (len(self.val_dataloader)  
+                                if self.val_dataloader is not None else 0)  
+        # 验证集 batch 总数（如果没有验证集则为 0）
+    
+    def prepare_model(self, model):
+        model.trainer = self  
+        # 将 trainer 绑定到模型，方便模型内部调用（如绘图时需要 trainer 信息）
+        model.board.xlim = [0, self.max_epochs]  
+        # 设置绘图横坐标范围为 [0, max_epochs]
+        self.model = model  
+        # 保存模型引用到 trainer 内部
+    
+    def fit(self, model, data):
+        self.prepare_data(data)  
+        # 准备数据（加载 DataLoader）
+        self.prepare_model(model)  
+        # 准备模型（绑定 trainer，设置绘图范围）
+        self.optim = model.configure_optimizers()  
+        # 调用模型的优化器配置方法，得到优化器
+        self.epoch = 0  
+        # 当前 epoch 计数器
+        self.train_batch_idx = 0  
+        # 当前训练 batch 索引
+        self.val_batch_idx = 0  
+        # 当前验证 batch 索引
+        for self.epoch in range(self.max_epochs):  
+            # 循环训练多个 epoch
+            self.fit_epoch()  
+            # 每个 epoch 内部的训练逻辑（由子类实现）
+    
+    def fit_epoch(self):
+        raise NotImplementedError  
+        # 抽象方法，子类必须实现每个 epoch 的训练细节
+----------------------------------------------------------------------------------------------
+3.Synthetic Regression Data 合成回归数据
+
+C1：Generating the Dataset
+class SyntheticRegressionData(d2l.DataModule): #@save  # 定义一个合成线性回归数据集类，继承自 d2l.DataModule
+    """Synthetic data for linear regression."""  # 文档字符串，说明这是用于线性回归的合成数据
+    def __init__(self, w, b, noise=0.01, num_train=1000, num_val=1000,
+                 batch_size=32):  # 构造函数，传入真实权重 w、偏置 b、噪声水平、训练/验证样本数和 batch 大小
+        super().__init__()  # 调用父类 DataModule 的初始化方法
+        self.save_hyperparameters()  # 自动保存构造函数的参数为类属性，方便后续使用
+        n = num_train + num_val  # 总样本数 = 训练集样本数 + 验证集样本数
+        self.X = torch.randn(n, len(w))  # 随机生成特征矩阵 X，服从标准正态分布，形状为 [n, 特征数]
+        noise = torch.randn(n, 1) * noise  # 生成高斯噪声，形状为 [n,1]，并按 noise 参数缩放
+        self.y = torch.matmul(self.X, w.reshape((-1, 1))) + b + noise  
+        # 生成标签 y = Xw + b + 噪声，其中 w.reshape((-1,1)) 把权重向量变成列向量，便于矩阵乘法
+data = SyntheticRegressionData(w=torch.tensor([2, -3.4]), b=4.2) #人为设定了线性模型的真实参数，这就是所谓的 ground truth（真实值），后面训练出的模型参数可以和它对比，看是否学对了。
+print('features:', data.X[0], '\nlabel:', data.y[0]) 
+----------------------------------------------------------------------------------------------
+C2：Reading the Dataset
+@d2l.add_to_class(SyntheticRegressionData)  # 使用 d2l 提供的装饰器，把方法动态添加到 SyntheticRegressionData 类中
+def get_dataloader(self, train):  # 定义数据加载器方法，参数 train 表示是否加载训练集
+    if train:  
+        indices = list(range(0, self.num_train))  # 如果是训练集，索引范围是 [0, num_train)
+        # The examples are read in random order
+        random.shuffle(indices)  # 打乱训练集索引，保证每个 epoch 的样本顺序不同（随机性）
+    else:
+        indices = list(range(self.num_train, self.num_train+self.num_val))  
+        # 如果是验证集，索引范围是 [num_train, num_train+num_val)，不打乱顺序
+    
+    for i in range(0, len(indices), self.batch_size):  
+        # 按 batch_size 大小切分索引，每次取一批
+        batch_indices = torch.tensor(indices[i: i+self.batch_size])  
+        # 当前 batch 的索引转为张量
+        yield self.X[batch_indices], self.y[batch_indices]  
+        # 使用索引取出对应的特征 self.X 和标签 self.y，并返回一个 batch
+
+X, y = next(iter(data.train_dataloader()))  
+# data.train_dataloader() 返回一个 DataLoader（可迭代对象）
+# iter(...) 将 DataLoader 转换为迭代器
+# next(...) 从迭代器中取出第一个 batch
+# 解包成 X（特征）和 y（标签）
+
+print('X shape:', X.shape, 'y shape:', y.shape)  
+# 打印 X 和 y 的张量形状
+# X.shape = [32, 2]，表示一个 batch 有 32 个样本，每个样本有 2 个特征
+# y.shape = [32, 1]，表示对应的 32 个标签，每个标签是一个标量
+-----------------------------------------------------------------------------------------------
+C3：Concise Implementation of the Data Loader
+
+@d2l.add_to_class(d2l.DataModule) #@save  
+# 使用 d2l 提供的装饰器，把这个方法动态添加到 DataModule 类中，并保存到 d2l 库中
+
+def get_tensorloader(self, tensors, train, indices=slice(0, None)):  
+    # 定义一个方法，用于把张量数据封装成 DataLoader
+    # 参数 tensors: 一个 (X, y) 的元组，包含特征和标签张量
+    # 参数 train: 是否是训练集（决定是否打乱数据）
+    # 参数 indices: 选择数据子集的切片，默认是 slice(0, None)，即取全部数据
+
+    tensors = tuple(a[indices] for a in tensors)  
+    # 根据 indices 对输入的张量进行切片，得到子集
+    # 例如 indices=slice(0,100) 就只取前 100 个样本
+
+    dataset = torch.utils.data.TensorDataset(*tensors)  
+    # 使用 TensorDataset 把 (X, y) 封装成一个数据集对象
+    # 这样 dataset[i] 会返回 (X[i], y[i])
+
+    return torch.utils.data.DataLoader(dataset, self.batch_size,  
+                                       shuffle=train)  
+    # 返回一个 DataLoader，用于按 batch 提供数据
+    # batch_size 来自 DataModule 的属性
+    # shuffle=train 表示如果是训练集则打乱数据，否则保持顺序
+
+@d2l.add_to_class(SyntheticRegressionData) #@save  
+# 使用 d2l 提供的装饰器，把这个方法动态添加到 SyntheticRegressionData 类中，并保存到 d2l 库中
+
+def get_dataloader(self, train):  
+    # 定义数据加载器方法，参数 train 表示是否加载训练集
+    i = slice(0, self.num_train) if train else slice(self.num_train, None)  
+    # 如果是训练集：取前 self.num_train 个样本
+    # 如果是验证集：取从 self.num_train 到最后的样本
+    return self.get_tensorloader((self.X, self.y), train, i)  
+    # 调用之前在 DataModule 中定义的 get_tensorloader 方法
+    # 把 (X, y) 张量、train 标志、切片 i 传入
+    # 返回一个 DataLoader，用于按 batch 提供训练或验证数据
+------------------------------------------------------------------------------------------------
+C4：Summary
+	数据加载器（DataLoader）提供了一种统一的方式来抽象数据的加载与处理过程。它们能够屏蔽底层数据来源的差异，使得同一套训练流程可以适用于不同类型和来源的数据。数据加载器还具有可组合性，可以将多个处理步骤（如加载、裁剪、归一化等）串联起来，构建完整的数据处理流水线。在这一节中，我们通过二维线性回归的合成数据示例，展示了如何利用数据加载器快速生成并迭代数据。二维线性模型本身虽然简单，但足以作为测试回归模型效果的工具，帮助我们在数据有限或系统欠定的情况下验证模型的正确性。
+
+----------------------------------------------------------------------------------------------
+4.Linear Regression Implementation from Scratch 从零开始实现线性回归
+%matplotlib inline
+import torch
+from d2l import torch as d2l
+----------------------------------------------------------------------------------------------
+C1：Defining the Model
+
+class LinearRegressionScratch(d2l.Module):  # 定义一个线性回归模型类，继承自 d2l.Module
+    """The linear regression model implemented from scratch."""  # 文档字符串，说明这是手写实现的线性回归模型
+    
+    def __init__(self, num_inputs, lr, sigma=0.01):  
+        # 构造函数，初始化模型参数
+        # num_inputs: 输入特征的维度（例如二维输入就是 2）
+        # lr: 学习率（learning rate）
+        # sigma: 权重初始化时的标准差，默认 0.01
+        super().__init__()  
+        # 调用父类 d2l.Module 的初始化方法，确保继承的功能可用
+        self.save_hyperparameters()  
+        # 自动保存构造函数传入的参数（num_inputs, lr, sigma），作为类属性
+        
+        self.w = torch.normal(0, sigma, (num_inputs, 1), requires_grad=True)  
+        # 初始化权重参数 w
+        # 从均值为 0、标准差为 sigma 的正态分布中随机采样
+        # 形状是 (num_inputs, 1)，即每个输入特征对应一个权重
+        # requires_grad=True 表示训练时需要对 w 求梯度
+        
+        self.b = torch.zeros(1, requires_grad=True)  
+        # 初始化偏置参数 b
+        # 初始值为 0，形状是标量 (1,)
+        # requires_grad=True 表示训练时需要对 b 求梯度
+
+@d2l.add_to_class(LinearRegressionScratch) #@save  
+# 使用 d2l 提供的装饰器，把这个方法动态添加到 LinearRegressionScratch 类中，并保存到 d2l 库中
+
+def forward(self, X):  
+    # 定义前向传播函数 forward
+    # 参数 X: 输入特征张量，形状通常是 [batch_size, num_inputs]
+
+    return torch.matmul(X, self.w) + self.b  
+    # 实现线性回归的预测公式 y = Xw + b
+    # torch.matmul(X, self.w): 矩阵乘法，得到预测值
+    # + self.b: 加上偏置项
+    # 返回结果形状是 [batch_size, 1]，即每个样本对应一个预测标量
+----------------------------------------------------------------------------------------------
+C2：Defining the Loss Function
+@d2l.add_to_class(LinearRegressionScratch) #@save
+def loss(self, y_hat, y):  
+        # 定义损失函数，用来衡量预测值 y_hat 和真实值 y 的差距
+        l = (y_hat - y) ** 2 / 2  
+        # 计算平方损失 (squared loss)
+        # (y_hat - y) ** 2 表示预测值与真实值的平方误差
+        # 除以 2 是数学上的常见写法，方便后续求导时公式更简洁
+        return l.mean()  
+        # 对所有样本的损失取平均，得到均方误差的一半 (MSE/2)
+        # 返回一个标量，作为最终的损失值
+----------------------------------------------------------------------------------------------
+C3：Defining the Optimization Algorithm
+class SGD(d2l.HyperParameters):  # 定义一个小批量随机梯度下降（SGD）优化器类，继承自 d2l.HyperParameters
+    """Minibatch stochastic gradient descent."""  # 文档字符串，说明这是小批量随机梯度下降算法
+    
+    def __init__(self, params, lr):
+        # 构造函数
+        # params: 需要优化的参数列表（通常是模型的权重和偏置）
+        # lr: 学习率（learning rate）
+        self.save_hyperparameters()
+        # 自动保存传入的超参数（params, lr），作为类的属性
+        # 这样 self.params 和 self.lr 就能在其他方法中直接使用
+
+    def step(self):
+        # 执行一次参数更新（梯度下降）
+        for param in self.params:
+            param -= self.lr * param.grad
+            # 按照 SGD 更新公式：θ ← θ - lr * ∇θ
+            # param.grad 存储了反向传播计算得到的梯度
+            # self.lr 是学习率，控制更新步长
+
+    def zero_grad(self):
+        # 将所有参数的梯度清零
+        for param in self.params:
+            if param.grad is not None:
+                param.grad.zero_()
+                # 把梯度张量置为 0，避免梯度在下一次迭代时累积
+
+@d2l.add_to_class(LinearRegressionScratch) #@save  
+# 使用 d2l 提供的装饰器，把这个方法动态添加到 LinearRegressionScratch 类中，并保存到 d2l 库中
+
+def configure_optimizers(self):  
+    # 定义一个方法，用来配置优化器
+    # 在训练框架里，通常需要告诉模型该用什么优化算法来更新参数
+
+    return SGD([self.w, self.b], self.lr)  
+    # 返回一个 SGD 优化器实例
+    # 优化的参数是模型的权重 self.w 和偏置 self.b
+    # 学习率 self.lr 来自模型初始化时保存的超参数
+----------------------------------------------------------------------------------------------
+C4：Training
+
+@d2l.add_to_class(d2l.Trainer)  #@save
+def prepare_batch(self, batch):
+    # 预处理一个 batch 的数据
+    # 这里直接返回原始 batch，不做额外处理
+    # 在更复杂的任务中，可以在这里加上数据搬到 GPU、数据增强等操作
+    return batch
+
+
+@d2l.add_to_class(d2l.Trainer)  #@save
+def fit_epoch(self):
+    # 定义一个 epoch 的训练过程
+    
+    self.model.train()  
+    # 切换模型到训练模式（启用 dropout、batchnorm 等训练行为）
+    
+    for batch in self.train_dataloader:  
+        # 遍历训练集的所有 batch
+        loss = self.model.training_step(self.prepare_batch(batch))  
+        # 调用模型的 training_step 方法，计算当前 batch 的损失
+
+        # ====== 训练步骤 ======
+        self.optim.zero_grad()        # 清空上一次迭代的梯度
+        loss.backward()               # 反向传播，计算梯度
+        if self.gradient_clip_val > 0:  
+            self.clip_gradients(self.gradient_clip_val, self.model)  
+            # 如果设置了梯度裁剪，执行裁剪，防止梯度爆炸
+        self.optim.step()             # 参数更新：θ ← θ - lr * ∇θ
+        self.train_batch_idx += 1     # 训练 batch 计数器加一
+
+    # ====== 验证步骤 ======
+    if self.val_dataloader is None:  
+        return  # 如果没有验证集，直接返回
+    
+    self.model.eval()  
+    # 切换模型到评估模式（关闭 dropout、batchnorm 的训练行为）
+    
+    for batch in self.val_dataloader:  
+        with torch.no_grad():  
+            # 验证时不需要计算梯度，节省内存和加速
+            self.model.validation_step(self.prepare_batch(batch))  
+            # 调用模型的验证步骤，计算验证指标（如损失、准确率）
+        self.val_batch_idx += 1  
+        # 验证 batch 计数器加一
+
+model = LinearRegressionScratch(2, lr=0.03)
+# 初始化一个线性回归模型
+# num_inputs=2 表示输入特征维度是 2
+# lr=0.03 设置学习率
+# 这个模型内部会随机初始化权重 w 和偏置 b
+
+data = d2l.SyntheticRegressionData(w=torch.tensor([2, -3.4]), b=4.2)
+# 生成一个合成的回归数据集
+# 真实参数设定为 w = [2, -3.4], b = 4.2
+# 数据集会返回 (X, y)，其中 y = Xw + b + 噪声
+# 这样我们就知道“标准答案”，方便检验模型能否学出来
+
+trainer = d2l.Trainer(max_epochs=3)
+# 创建一个训练器对象
+# max_epochs=3 表示训练 3 个完整的 epoch
+# Trainer 会负责调用模型的 forward、loss、优化器等方法
+
+trainer.fit(model, data)
+# 启动训练过程
+# 1. 遍历数据集，按 batch 喂给模型
+# 2. 前向传播：计算预测值 y_hat
+# 3. 计算损失：loss(y_hat, y)
+# 4. 反向传播：loss.backward()
+# 5. 优化器更新参数：w, b ← w, b - lr * grad
+# 6. 每个 epoch 结束后，还会在验证集上评估（如果有 val_dataloader）
+----------------------------------------------------------------------------------------------
+5.Concise Implementation of Linear Regression
+依赖：i) tensors for data storage and linear algebra
+	 ii) automatic differentiation for calculating gradients
+本节讲如何通过API接入开源库实现模型.
+import numpy as np
+import torch
+from torch import nn
+from d2l import torch as d2l
+----------------------------------------------------------------------------------------------
+C1：Defining the Model
+class LinearRegression(d2l.Module):  # 继承 d2l.Module，方便使用训练框架
+    """Linear regression with high-level APIs."""
+    def __init__(self, lr):
+        super().__init__()                 # 调用父类构造函数
+        self.save_hyperparameters()        # 保存超参数（lr）
+        self.net = nn.LazyLinear(1)        # 定义线性层，输出维度=1，输入维度自动推断
+        self.net.weight.data.normal_(0, 0.01)  # 权重初始化为 N(0,0.01)
+        self.net.bias.data.fill_(0)            # 偏置初始化为 0
+
+@d2l.add_to_class(LinearRegression) #@save
+def forward(self, X):#前向传播
+	return self.net(X)
+----------------------------------------------------------------------------------------------
+C2：Defining the Loss Function
+@d2l.add_to_class(LinearRegression)  # 把方法动态加到 LinearRegression 类里
+def loss(self, y_hat, y):
+    fn = nn.MSELoss()        # 使用 PyTorch 内置的均方误差损失 (Mean Squared Error)
+    return fn(y_hat, y)      # 计算预测值 y_hat 和真实值 y 的 MSE
+----------------------------------------------------------------------------------------------
+C3：Defining the Optimization Algorithm
+@d2l.add_to_class(LinearRegression) #@save
+def configure_optimizers(self):
+	return torch.optim.SGD(self.parameters(), self.lr)
+
+----------------------------------------------------------------------------------------------
+C4：Training
+# 初始化模型，学习率设为 0.03
+model = LinearRegression(lr=0.03)
+# 生成合成数据：y = 2*x1 - 3.4*x2 + 4.2 + 噪声
+data = d2l.SyntheticRegressionData(w=torch.tensor([2, -3.4]), b=4.2)
+# 创建训练器，最多训练 3 个 epoch
+trainer = d2l.Trainer(max_epochs=3)#Trainer 会自动调用：model.training_step(...) 计算损失；model.configure_optimizers() 获取优化器；model.plot(...) 可视化训练过程
+#d2l.Trainer 自动构建训练流程；它内部会自动调用：forward(X) → 得到预测值；loss(y_hat, y) → 计算损失；configure_optimizers() → 获取优化器
+# 开始训练模型
+trainer.fit(model, data)
+
+@d2l.add_to_class(LinearRegression)  # 把方法动态加到 LinearRegression 类里
+def get_w_b(self):
+    return (self.net.weight.data, self.net.bias.data)  # 返回权重和偏置张量
+# 获取训练后的参数
+w, b = model.get_w_b()
+
+print(f'error in estimating w: {data.w - w.reshape(data.w.shape)}')
+print(f'error in estimating b: {data.b - b}')
+----------------------------------------------------------------------------------------------
+6.Generalization 泛化
+generalize、overfitting、regularization（正则化）
+
+C1:Training Error and Generalization Error
+样本遵从 IID assumption.独立同分布假设。（independently from identical distribution）
+
+1. 基本定义：
+- Training Error：模型在训练数据上的误差
+- Generalization Error：模型在未见过的新数据上的误差
+
+2. 经典理论观点：
+- 简单模型 + 大量数据 → 训练误差 ≈ 泛化误差
+- 复杂模型 + 少量数据 → 训练误差下降，但泛化误差上升（过拟合）
+
+3. 过拟合现象解释：
+- 如果模型足够复杂，甚至能完美拟合随机标签，那么训练误差为零也无法保证泛化能力。
+- 此时模型可能只是“死记硬背”训练数据，在新数据上表现如同随机猜测。
+
+4. 模型复杂度 ≠ 参数数量：
+- 核方法（如 SVM）在数学上相当于在无限维空间中建模，但其复杂度可通过以下方式控制：
+  - 正则化项（如 L2 范数）
+  - 支持向量数量
+  - 核函数选择
+- 说明：参数多不代表泛化差，关键在于是否有结构性约束。
+
+5. 总结：
+- 训练误差低 ≠ 模型好，关键是泛化误差是否也低。
+- 泛化能力由模型结构、正则化方式、数据量和噪声水平共同决定。
+----------------------------------------------------------------------------------------------
+C2：Underfitting or Overfitting？
+1. 基本概念：
+- Underfitting（欠拟合）：模型过于简单，无法捕捉数据模式 → 训练误差高，验证误差高，gap 小。
+- Overfitting（过拟合）：模型过于复杂，记住了训练数据 → 训练误差低，验证误差高，gap 大。
+
+2. 多项式拟合 (Polynomial Curve Fitting)：
+- 低阶多项式（如一次线性）：表达能力不足 → 容易欠拟合。
+- 高阶多项式（如十次以上）：表达能力过强 → 容易过拟合，尤其在数据量少时。
+
+3. 数据量 (Dataset Size) 的影响：
+- 数据量少：复杂模型容易过拟合，因为模型能“死记硬背”有限样本。
+- 数据量大：过拟合风险降低，复杂模型也能更好泛化。
+- 欠拟合主要由模型过于简单导致，与数据量关系不大。
+
+4. 典型现象总结：
+- 欠拟合：训练误差高，验证误差高，gap 小 → 模型太简单。
+- 过拟合：训练误差低，验证误差高，gap 大 → 模型太复杂或数据太少。
+
+5. 解决思路：
+- 欠拟合 → 增加模型复杂度（更高阶多项式、更多参数）、减少正则化。
+- 过拟合 → 增加数据量、使用正则化、降低模型复杂度、早停 (early stopping)。
+----------------------------------------------------------------------------------------------
+C3：Model Selection
+Cross-Validation
+1. 模型选择的目标：
+- 在多个候选模型或超参数设置中，选择在未知数据上泛化能力最好的模型。
+- 不能仅依赖训练误差，因为训练误差低 ≠ 泛化误差低。
+
+2. 交叉验证 (Cross-Validation, CV) 的基本思想：
+- 将数据集划分为 K 个大小相近的子集 (folds)。
+- 进行 K 次训练与验证：
+  - 每次用 K-1 个子集作为训练集
+  - 用剩下的 1 个子集作为验证集
+- 计算 K 次验证误差的平均值，作为模型的性能估计。
+
+3. 常见形式：
+- K-Fold CV：最常用，K=5 或 K=10 较常见。
+- Leave-One-Out CV (LOOCV)：K = n，每次留一个样本做验证，计算代价极高。
+- Stratified K-Fold：在分类任务中保持类别比例一致，避免类别不平衡带来的偏差。
+
+4. 优点：
+- 比单次划分 (hold-out) 更稳定，利用数据更充分。
+- 能较好地估计模型的泛化误差。
+- 可用于模型选择和超参数调优。
+
+5. 缺点：
+- 计算开销大：需要训练 K 次模型。
+- 误差估计可能有偏：
+  - 因为每次训练集比全量数据少 → 泛化误差估计偏高。
+  - 如果用 CV 结果同时做模型选择和性能报告 → 可能偏乐观。
+
+6. 实际应用建议：
+- 小数据集：优先使用 K-Fold CV 或 LOOCV。
+- 大数据集：可用简单的 hold-out 或较小的 K 值来降低计算成本。
+- 模型选择后，最好再用独立的测试集评估最终性能。
+----------------------------------------------------------------------------------------------
+7.Weight Decay
+随着模型维度增加，特征数爆炸式增长，容易过拟合；Weight Decay 通过惩罚大权重来控制模型复杂度，从而改善泛化能力。
+%matplotlib inline
+import torch
+from torch import nn
+from d2l import torch as d2l
+----------------------------------------------------------------------------------------------
+C1：Norms and Weight Decay
+ℓ2 regularization(L2正则化)：weight decay, operates by restricting the values that the parameters can take.
+1. Norms（范数）基础：
+- ℓ1 范数：‖w‖₁ = Σ |wᵢ|
+  - 强调稀疏性，倾向于让部分参数变为零。
+- ℓ2 范数：‖w‖₂² = Σ| wᵢ|²
+  - 强调整体平滑，倾向于让所有参数都变小但不为零。
+- 范数的作用：衡量参数向量的“大小”，不同范数对应不同的正则化效果。
+
+2. Weight Decay（权重衰减）定义：
+- 在损失函数中加入参数范数的惩罚项，常见形式：
+  Loss = Empirical Error + λ/2 *‖w‖₂²
+- 其中 λ 控制正则化强度。
+
+3. 为什么需要 Weight Decay：
+- 高维模型（如高阶多项式回归）容易过拟合。
+- 特征数随多项式次数 d 增长迅速：
+  C(k-1+d, k-1) = 组合数，表示次数为 d 的单项式数量。
+- 参数过多时，模型可能“记住”训练数据中的噪声 → 泛化能力差。
+- Weight Decay 通过惩罚大权重，限制模型复杂度，降低过拟合风险。
+
+4. ℓ1 vs ℓ2 正则化的差异：
+- ℓ2 (Ridge Regression)：均匀缩小权重，不会产生稀疏解，适合特征很多且都可能有用的情况。
+- ℓ1 (Lasso Regression)：部分权重直接压缩为零，产生稀疏解，适合特征选择。
+
+5. 总结：
+- Norms 提供了衡量参数大小的方式。
+- Weight Decay 是通过范数惩罚来控制模型复杂度的正则化方法。
+- ℓ2 正则化常用于防止过拟合；ℓ1 正则化常用于特征选择。
+----------------------------------------------------------------------------------------------
+C2：High-Dimensional Linear Regression
+class Data(d2l.DataModule):
+    def __init__(self, num_train, num_val, num_inputs, batch_size):
+        # 保存超参数为类属性，便于后续调用
+        self.save_hyperparameters()
+
+        # 总样本数 = 训练样本 + 验证样本
+        n = num_train + num_val
+
+        # 生成输入特征矩阵 X，形状为 (n, num_inputs)，服从标准正态分布
+        self.X = torch.randn(n, num_inputs)
+
+        # 生成高斯噪声，形状为 (n, 1)，标准差为 0.01
+        noise = torch.randn(n, 1) * 0.01
+
+        # 设置真实权重 w 和偏置 b，用于构造线性模型
+        w, b = torch.ones((num_inputs, 1)) * 0.01, 0.05
+
+        # 生成标签 y = Xw + b + 噪声
+        self.y = torch.matmul(self.X, w) + b + noise
+
+    def get_dataloader(self, train):
+        # 根据 train 参数决定切片范围：
+        # 如果是训练集，取前 self.num_train 个样本
+        # 如果是验证集，取从 self.num_train 到末尾的样本
+        i = slice(0, self.num_train) if train else slice(self.num_train, None)
+
+        # 返回对应切片的数据加载器（DataLoader）
+        return self.get_tensorloader([self.X, self.y], train, i)
+----------------------------------------------------------------------------------------------
+C3：Implementation from Scratch
+
+def l2_penalty(w):#定义L2范数惩罚项
+	return (w ** 2).sum() / 2
+
+class WeightDecayScratch(d2l.LinearRegressionScratch):
+    def __init__(self, num_inputs, lambd, lr, sigma=0.01):
+        # 调用父类初始化：完成权重初始化等基本设置
+        super().__init__(num_inputs, lr, sigma)
+        # 保存超参数（输入维度、正则化系数、学习率、初始化标准差）
+        self.save_hyperparameters()
+
+    def loss(self, y_hat, y):
+        # 损失函数 = 原始均方误差 + L2 正则化项
+        # super().loss(y_hat, y) ：父类的 MSE 损失
+        # self.lambd * l2_penalty(self.w) ：权重衰减项，惩罚过大的权重
+        return (super().loss(y_hat, y) +
+                self.lambd * l2_penalty(self.w))
+
+# 构造数据集：训练集 20 个样本，验证集 100 个样本，
+# 每个样本有 200 个输入特征，batch_size=5
+data = Data(num_train=20, num_val=100, num_inputs=200, batch_size=5)
+
+# 定义训练器，最多训练 10 个 epoch
+trainer = d2l.Trainer(max_epochs=10)
+
+# 定义一个函数，用于在给定正则化系数 lambd 下训练模型
+def train_scratch(lambd):
+    # 初始化带权重衰减的线性回归模型
+    # num_inputs=200：输入维度
+    # lambd：L2 正则化强度
+    # lr=0.01：学习率
+    model = WeightDecayScratch(num_inputs=200, lambd=lambd, lr=0.01)
+
+    # 将训练过程中的 y 轴（损失曲线）设置为对数刻度，便于观察收敛趋势
+    model.board.yscale = 'log'
+
+    # 使用 trainer 进行训练，传入模型和数据
+    trainer.fit(model, data)
+
+    # 打印最终学到的权重向量 w 的 L2 范数
+    # l2_penalty(model.w) 计算的是 ||w||²
+    print('L2 norm of w:', float(l2_penalty(model.w)))
+
+train_scratch(0)
+
+train_scratch(3)
+----------------------------------------------------------------------------------------------
+C4：Concise Implementation
+class WeightDecay(d2l.LinearRegression):
+    def __init__(self, wd, lr):
+        # 调用父类 LinearRegression 的初始化方法，传入学习率 lr
+        super().__init__(lr)
+        # 保存超参数，便于后续调用（wd=权重衰减系数，lr=学习率）
+        self.save_hyperparameters()
+        # 将权重衰减系数保存为类属性
+        self.wd = wd
+
+    def configure_optimizers(self):
+        # 配置优化器，这里使用 SGD
+        # 注意：我们分别对 weight 和 bias 设置参数组
+        # - 对权重 self.net.weight 应用 weight_decay（L2 正则化）
+        # - 对偏置 self.net.bias 不应用 weight_decay
+        # 这样做的原因是：通常只对权重做正则化，避免偏置被不必要地惩罚
+        return torch.optim.SGD([
+            {'params': self.net.weight, 'weight_decay': self.wd},  # 权重参数 + L2 正则化
+            {'params': self.net.bias} ], lr=self.lr) # 偏置参数，不加正则化
+
+model = WeightDecay(wd=3, lr=0.01)
+model.board.yscale='log'
+trainer.fit(model, data)
+print('L2 norm of w:', float(l2_penalty(model.get_w_b()[0])))
+
+
+
+

@@ -1,0 +1,820 @@
+6.Builders’ Guide
+(1) 深度学习的快速发展不仅依赖于大数据集和强大硬件，还得益于优秀的软件工具。
+
+(2) 现代的开源库（从 Theano 开始）让研究者能快速构建模型原型，避免重复劳动。
+
+(3) 深度学习库提供了更高级别的抽象。研究人员的设计思路已经从关注单个神经元，发展到关注整个层，现在更是经常使用“更粗糙的块”来设计架构。
+
+(4) 之前的章节为了让你快速入门，直接调用了库的功能，并跳过了许多关于它们如何工作的细节。
+
+(5) 本章（第六章）将“揭开帷幕”，深入探讨深度学习计算的关键组件，主要包括： (I) 模型构建 (II) 参数的访问和初始化 (III) 设计自定义层和块 (IV) 将模型读取和写入磁盘 (V) 利用GPU实现显著加速
+
+(6) 学习这些内容的目标是让你从“最终用户”转变为“高级用户”。你将能够灵活地实现更复杂的模型，同时也能利用成熟库的优势。
+----------------------------------------------------------------------------------------------
+6.1 Layers and Modules
+import torch
+from torch import nn
+from torch.nn import functional as F
+
+(1) 回顾：从神经元到层 (I) 我们最早接触的线性模型可以看作一个“神经元”，它接收输入、产生标量输出，并拥有可更新的参数。 (II) 接着，我们使用向量化运算，将神经元组合成了“层”（Layer）。 (III) 一个“层”同样具有三个特性：接收一组输入，产生对应的输出，并拥有一组可调的参数。
+
+(2) 引入“模块” (Module) (I) 在多层感知机（MLP）中，我们发现无论是整个模型，还是模型中的某个层，都共享着相同的结构（输入、输出、参数）。 (II) 在构建复杂网络时（如 ResNet），我们发现存在大量重复出现的“层的组合”（groups of layers）。 (III) 为了方便地组织和复用这些“层的组合”，我们引入了“模块”（Module）的概念（在 D2L 中也常称为“块” (Block)）。
+
+(3) 什么是模块 (Module) (I) “模块”是一个灵活的抽象概念。它可以代表： A. 一个单独的层（如线性层）。 B. 一个由多个层组成的组件（如一个“卷积-激活-池化”组合）。 C. 整个模型（如一个完整的 ResNet）。 (II) 使用模块的好处是：它们可以被灵活地组合（嵌套）成更复杂、更大的结构。 (III) 通过这种方式，我们可以用非常紧凑（compact）的代码来实现非常复杂的神经网络。
+
+(4) 从编程角度理解模块 (I) 在编程中，一个模块（Module）通常是用一个类（Class）来表示的。 (II) 当我们定义自己的模块时，只需要关心两件事： A. 定义前向传播方法（forward）：即描述数据如何从输入转变为输出。 B. 存储必要的参数（Parameters）：例如权重和偏置。（注意：某些模块，如 ReLU，不需要参数）。 (III) 我们不需要担心反向传播（backpropagation）。深度学习框架的自动微分（auto differentiation）功能会自动为我们处理梯度的计算。
+
+(5) 示例：nn.Sequential (I) nn.Sequential 是一个特殊的模块类。 (II) 它的作用是按顺序持有一系列其他的模块（例如 LazyLinear 和 ReLU，它们本身也都是模块）。 (III) 它的前向传播方法会自动地将数据依次传入它所包含的每个子模块中。 (IV) 我们调用 net(X) 来获得输出，这实际上是 net.__call__(X) 的简写，它会触发 forward 方法的执行。
+
+net = nn.Sequential(nn.LazyLinear(256), nn.ReLU(), nn.LazyLinear(10))
+X = torch.rand(2, 20)
+net(X).shape #torch.Size([2, 10])
+----------------------------------------------------------------------------------------------
+6.1.1 A Custom Module自定义模块
+(1) 模块 (Module) 必须提供的基本功能 要理解模块如何工作，最好的方法是自己实现一个。一个模块必须具备以下功能： (I) 在其“前向传播方法” (forward) 中接收输入数据。 (II) 通过“前向传播方法”返回一个值，从而产生输出。（输出的形状可以和输入不同）。 (III) 能够计算其输出相对于输入的梯度（即“反向传播方法”）。这通常是自动发生的。 (IV) 存储和提供执行前向计算所必需的参数。 (V) 根据需要初始化模型参数。
+
+(2) 模块抽象的核心优势：多功能性 (Versatility) (I) （nn.Module）模块这个抽象概念非常灵活。 (II) 我们可以通过继承它来创建： A. 像全连接层一样的自定义层。 B. 像我们刚刚实现的 MLP 一样的完整模型。 C. 任何复杂度的中间组件。
+
+# 定义一个自定义的 MLP 类，它继承自 nn.Module 基类
+class MLP(nn.Module):
+
+    # 构造函数，用于初始化模型的组件
+    def __init__(self):
+
+        # 必须首先调用父类 nn.Module 的构造函数
+        super().__init__()
+
+        # 定义一个隐藏层，存储为 self.hidden
+        # LazyLinear "懒惰"地等待输入，自动推断输入维度，指定输出为 256
+        self.hidden = nn.LazyLinear(256)
+
+        # 定义一个输出层，存储为 self.out
+        # 指定输出维度为 10
+        self.out = nn.LazyLinear(10)
+
+    # 定义前向传播
+    # X 是模型的输入数据
+    def forward(self, X):
+
+        # 1. 数据 X 先通过隐藏层 self.hidden
+        # 2. 隐藏层的输出再通过 ReLU 激活函数 F.relu()
+        # 3. 激活后的结果最后通过输出层 self.out 并返回
+        return self.out(F.relu(self.hidden(X)))
+
+net = MLP()
+net(X).shape #torch.Size([2, 10])
+----------------------------------------------------------------------------------------------
+6.1.2 The Sequential Module顺序模块
+(1) Sequential 的工作原理 (I) Sequential 类（顺序模块）被设计用来“串联”（daisy-chain）其他模块。 (II) 我们可以通过定义一个简化的 MySequential 类来理解其工作机制。
+
+(2) 构建 MySequential 的两个关键方法 (I) __init__ (构造函数)：需要一个方法将模块（层）逐个附加到一个列表中。 (II) forward (前向传播)：需要一个方法让输入数据按照模块被添加的相同顺序，依次通过这个模块链条。
+# 定义一个自定义的 Sequential 类，它继承自 nn.Module 基类
+class MySequential(nn.Module):
+
+    # 构造函数，*args 允许你传入任意数量的模块（层）
+    # 比如 MySequential(nn.LazyLinear(256), nn.ReLU(), nn.LazyLinear(10))
+    def __init__(self, *args):
+        
+        # 必须先调用父类的构造函数
+        super().__init__()
+        
+        # 遍历所有传入的模块（层）
+        # enumerate 会同时给你索引(idx)和模块(module)
+        for idx, module in enumerate(args):
+            
+            # self.add_module() 是 nn.Module 的一个关键方法
+            # 它向当前模块(MySequential)注册一个“子模块”(module)
+            # 并给它一个名字 (这里用索引转成的字符串，如 "0", "1", "2")
+            # 注册后，PyTorch 就能自动管理这些子模块的参数
+            self.add_module(str(idx), module)
+
+    # 定义前向传播
+    def forward(self, X):
+        
+        # self.children() 会按注册顺序返回所有子模块
+        # (即 "0", "1", "2" 对应的那些层)
+        for module in self.children():
+            
+            # 核心逻辑：
+            # 将 X 传入第一个模块，得到的结果 X 再传入第二个模块...
+            # X = module(X) 实现了模块的“串联”
+            X = module(X)
+            
+        # 返回经过所有模块处理后的最终结果
+        return X
+----------------------------------------------------------------------------------------------
+6.1.3 Executing Code in the Forward Propagation Method
+(1) nn.Sequential 的局限性 (I) nn.Sequential 很方便，但它只能用于构建简单的“串联”式网络。 (II) 当需要更高的灵活性时，我们必须定义自己的模块（块）。
+
+(2) 自定义模块的优势 (I) 执行 Python 控制流：允许我们在 forward 方法中使用 if 语句或 while 循环。 (II) 执行任意数学运算：不局限于预定义的层，可以混合使用张量和自定义的数学操作。 (III) 使用“常数参数”：即在网络中引入一些在训练期间保持不变、不进行更新的固定参数（即普通的 Tensor，而非 nn.Parameter）。
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+# 定义一个自定义模块
+class FixedHiddenMLP(nn.Module):
+
+    def __init__(self):
+        # 必须先调用父类的构造函数
+        super().__init__()
+
+        # 定义一个“随机权重”张量。
+        # 关键：这 *不是* nn.Parameter，所以它是一个固定的常量。
+        # 它的值在训练期间不会被更新（即没有梯度）。
+        self.rand_weight = torch.rand((20, 20))
+
+        # 定义一个可训练的“懒惰”线性层，输出维度为 20
+        # PyTorch 会在第一次调用时自动推断其输入维度
+        self.linear = nn.LazyLinear(20)
+
+    # 定义前向传播
+    def forward(self, X):
+        
+        # 1. 数据首先通过可训练的线性层 self.linear
+        X = self.linear(X)
+
+        # 2. 接着，X 与 *固定的* self.rand_weight 张量进行矩阵乘法
+        #    然后加上一个常数 1，最后通过 ReLU 激活函数
+        #    这是一个“自定义”的、部分固定的层
+        X = F.relu(X @ self.rand_weight + 1)
+
+        # 3. 参数共享：X *再次* 通过 *同一个* self.linear 层
+        #    这里使用的权重与第 1 步中的完全相同
+        X = self.linear(X)
+
+        # 4. 控制流：一个 while 循环
+        #    只要 X 中所有元素的绝对值之和大于 1
+        while X.abs().sum() > 1:
+            # 就将 X 的所有元素除以 2（使其“缩小”）
+            X /= 2
+
+        # 5. 返回 X 中所有元素的总和（一个标量）
+        return X.sum()
+
+net = FixedHiddenMLP()
+net(X)    #tensor(-0.3836, grad_fn=<SumBackward0>)
+
+
+
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class NestMLP(nn.Module):
+    # 嵌套MLP
+    def __init__(self):
+        super().__init__()
+        
+        # self.net 是一个 Sequential 容器
+        # 它本身包含了一个两层的MLP (64 units -> 32 units)
+        self.net = nn.Sequential(nn.LazyLinear(64), nn.ReLU(),
+                                 nn.LazyLinear(32), nn.ReLU())
+        
+        # self.linear 是这个嵌套MLP的"最终"输出层
+        self.linear = nn.LazyLinear(16)
+
+    def forward(self, X):
+        # 1. X 首先通过内部的 self.net (64 -> 32)
+        # 2. self.net 的输出再通过 self.linear (32 -> 16)
+        return self.linear(self.net(X))
+
+# (假设 X = torch.rand(2, 20) 仍然存在)
+
+# chimera (嵌合体) 是一个包含三个主要部分的 Sequential 容器
+chimera = nn.Sequential(
+    NestMLP(),          # 第 1 块: NestMLP (输入 -> 16)
+    nn.LazyLinear(20),  # 第 2 块: 一个线性层 (16 -> 20)
+    FixedHiddenMLP()    # 第 3 块: 之前定义的带固定权重的MLP (20 -> 标量)
+)
+
+# 当你调用 chimera(X) 时，数据流是这样的：
+# 1. X (形状 [2, 20]) 进入 NestMLP()
+#    (在 NestMLP 内部: X -> net -> linear)
+#    输出形状变为 [2, 16]
+#
+# 2. [2, 16] 的结果进入 nn.LazyLinear(20)
+#    输出形状变为 [2, 20]
+#
+# 3. [2, 20] 的结果进入 FixedHiddenMLP()
+#    (在 FixedHiddenMLP 内部: linear -> relu(X@rand_w+1) -> linear -> while -> .sum())
+#    输出形状变为一个标量 (tensor)
+#
+# 4. 最终输出: tensor(0.0679, grad_fn=<SumBackward0>)
+----------------------------------------------------------------------------------------------
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+# 准备模拟数据
+# (batch_size=2, input_features=20)
+X = torch.rand(2, 20)
+
+# --- (1) 方式一：使用 nn.Sequential (快捷但受限) ---
+print("--- 1. nn.Sequential 方式 ---")
+
+# nn.Sequential 是一个“容器”，它按顺序自动执行你传入的模块
+# 优点：非常简洁
+# 缺点：数据流必须是严格的“一条龙”
+net_sequential = nn.Sequential(
+    nn.LazyLinear(256),
+    nn.ReLU(),
+    nn.LazyLinear(10)
+)
+
+# 执行模型
+output_sequential = net_sequential(X)
+print(f"Sequential 的输出形状: {output_sequential.shape}")
+
+
+# --- (2) 方式二：使用自定义 Class (灵活但稍繁琐) ---
+print("\n--- 2. 自定义 Class 方式 ---")
+
+# 这是我们之前定义的 MLP 类
+# 优点：你可以在 forward 方法中做任何事 (if/else, 循环, 参数共享等)
+# 缺点：需要编写 __init__ 和 forward 的“模板代码”
+class MLP(nn.Module):
+    
+    # 构造函数：准备好所有“零件”（层）
+    def __init__(self):
+        super().__init__()
+        # 我们创建的层必须存储为 self 的属性
+        self.hidden_layer = nn.LazyLinear(256)
+        self.activation = nn.ReLU()
+        self.output_layer = nn.LazyLinear(10)
+
+    # 前向传播：手动定义“数据如何流动”
+    def forward(self, x_input):
+        # 数据流：
+        # 1. 通过隐藏层
+        x = self.hidden_layer(x_input)
+        # 2. 通过激活函数
+        x = self.activation(x)
+        # 3. 通过输出层
+        x = self.output_layer(x)
+        # 4. 返回结果
+        return x
+
+# 实例化我们自定义的 MLP
+net_custom = MLP()
+
+# 执行模型
+output_custom = net_custom(X)
+print(f"自定义 Class 的输出形状: {output_custom.shape}")
+
+
+# --- (3) 总结对比 ---
+print("\n--- 3. 总结 ---")
+print("nn.Sequential: 像一条自动组装线。你只需按顺序放入零件，它会自动按顺序加工。")
+print("自定义 Class: 像一个手动车间。你准备好所有工具(层)，然后在 forward 里自己决定加工顺序。")
+----------------------------------------------------------------------------------------------
+6.1.4 Summary
+(1) "模块" (Module) 是一个灵活的、可嵌套的概念：
+单个“层”（Layer）可以是一个模块。
+许多“层”可以组成一个模块。
+许多“模块”也可以组成一个模块。
+
+(2) 模块可以包含任意代码（例如 forward 方法中的控制流）。
+
+(3) 模块会自动处理很多“内务”工作，包括参数初始化和反向传播。
+
+(4) Sequential 模块是专门用来处理“层”和“模块”的顺序串联（concatenations）的。
+----------------------------------------------------------------------------------------------
+6.2 Parameter Management
+(1) 目标：一旦确定了架构和超参数，训练的目标就是找到最小化损失函数的“参数”值。
+
+(2) 为什么需要管理参数： (I) 训练完成后，需要用这些参数来进行未来的预测。 (II) 希望提取参数以便在其他情境中复用。 (III) 将模型保存到磁盘，以便在其他软件中执行。 (IV) 检查参数以获得科学上的理解。
+
+(3) 框架的作用： (I) 大多数情况下，深度学习框架会处理参数声明和操作的繁重工作，我们可以忽略底层细节。 (II) 但有时（尤其是当我们不使用标准堆叠架构时），我们仍需要深入了解如何声明和操作参数。
+
+(4) 本节将涵盖： (I) 访问参数：用于调试、诊断和可视化。 (II) 参数共享：在不同模型组件间共享参数。
+import torch
+from torch import nn
+
+net = nn.Sequential(nn.LazyLinear(8),
+				   nn.ReLU(),
+				   nn.LazyLinear(1))
+X = torch.rand(size=(2, 4))
+net(X).shape #torch.Size([2, 1])
+----------------------------------------------------------------------------------------------
+6.2.1 Parameter Access	
+(1) 像列表一样访问层 (I) 当模型是用 nn.Sequential 定义时，我们可以像操作列表（List）一样，通过索引（如 net[2]）来访问模型中的任何一层。
+
+(2) 访问单个层的参数 (state_dict) (I) 我们可以使用 .state_dict() 方法来检查特定层的所有参数（权重和偏置）。 (II) net[2].state_dict() 会返回一个有序字典（OrderedDict），其中键是参数名（如 'weight', 'bias'），值是参数对应的张量。
+
+(3) 访问特定参数 (Targeted Parameters) (I) 每个参数（如 net[2].bias）本身是一个 torch.nn.parameter.Parameter 类的实例，而不仅仅是一个张量。 (II) Parameter 是一个复杂的对象，它包含了值、梯度和其他信息。 (III) 要获取参数的纯数值，你需要显式地访问其 .data 属性，例如 net[2].bias.data。
+
+(4) 访问梯度 (Gradient) (I) Parameter 对象也允许我们访问它的梯度（.grad）。 (II) 在网络刚初始化、还没有调用反向传播（backpropagation）时，梯度处于初始状态，其值为 None。 (III) 例如：net[2].weight.grad == None 的结果是 True。
+
+(5) 一次性访问所有参数 (I) 当模型变得复杂（例如嵌套模块）时，逐个访问参数会很繁琐。 (II) 我们可以使用 net.named_parameters() 方法来获取一个迭代器，它会遍历模型（及其所有子模块）中的所有参数。 (III) 这个迭代器返回的是 (参数名称, 参数对象) 的配对。 (IV) 参数的名称是分层的，例如 net[0] 的权重会被命名为 '0.weight'，net[2] 的偏置会被命名为 '2.bias'。 (V) (注意：net[1] 是 nn.ReLU()，它没有参数，所以不会出现在 named_parameters() 的列表中)。
+
+net[2].state_dict() #···
+type(net[2].bias), net[2].bias.data #(torch.nn.parameter.Parameter, tensor([0.0709]))
+net[2].weight.grad == None #True
+[(name, param.shape) for name, param in net.named_parameters()]
+----------------------------------------------------------------------------------------------
+6.2.2 Tied Parameters
+(1) 目标：在多个层之间“优雅地”共享参数。
+(4) 结论： (I) 这证明了 net[2] 和 net[4] 的参数是“绑定”在一起的。 (II) 它们不仅仅是数值相等，它们指向的是同一个张量（tensor）。 (III) 因此，改变其中一个，另一个也会随之改变。
+
+(5) 对梯度的影响： (I) 既然参数是共享的，那么梯度会如何处理？ (II) 在反向传播（backpropagation）期间，来自 net[2] 和 net[4] 的梯度将会被加在一起（added together），然后统一更新到那一套共享的参数上。
+import torch
+import torch.nn as nn
+
+# 假设 X = torch.rand(2, 4) 已经存在
+
+# --- 参数共享的实现 ---
+
+# (1) 我们需要给共享层一个名字（变量），以便引用它
+# 创建一个 nn.LazyLinear 层的 *单个实例*
+shared = nn.LazyLinear(8)
+
+# (2) 构建 Sequential 模型
+net = nn.Sequential(nn.LazyLinear(8), nn.ReLU(),
+                    shared,  # 在 net[2] 的位置使用 shared 实例
+                    nn.ReLU(),
+                    shared,  # 在 net[4] 的位置 *再次* 使用 *同一个* shared 实例
+                    nn.ReLU(),
+                    nn.LazyLinear(1))
+
+# (3) 运行一次前向传播，以触发 LazyLinear 的初始化
+net(X)
+
+# --- 验证参数共享 ---
+
+# (4) 检查参数是否相同
+# 比较 net[2] 和 net[4] 的权重值
+# 此时它们应该是相等的
+print(net[2].weight.data[0] == net[4].weight.data[0])
+
+# (5) 修改 net[2] 的权重
+net[2].weight.data[0, 0] = 100
+
+# (6) 再次检查它们是否仍然相等
+# 因为 net[2] 和 net[4] 指向 *同一个对象*，
+# 所以修改 net[2] 也会导致 net[4] 改变。
+print(net[2].weight.data[0] == net[4].weight.data[0])
+----------------------------------------------------------------------------------------------
+6.3 Parameter Initialization
+(1) 为什么需要初始化： (I) 既然我们知道了如何访问参数，就需要看看如何正确地初始化它们。 (II) 深度学习框架会为层提供默认的随机初始化。 (III) 但我们经常希望根据不同的策略（protocols）来初始化权重。
+
+(2) 框架的支持： (I) 框架提供了最常用的初始化方法。 (II) 框架也允许我们创建自定义的初始化器。
+
+(3) PyTorch 的默认初始化： (I) 默认情况下，PyTorch 会均匀地（uniformly）初始化权重（weight）和偏置（bias）矩阵。 (II) 初始化的数值范围是根据该层的输入和输出维度计算得出的。 (III) PyTorch 的 nn.init 模块提供了多种预设的初始化方法。
+
+import torch
+from torch import nn
+----------------------------------------------------------------------------------------------
+6.3.1 Built-in Initialization
+# 1. 定义一个自定义的初始化函数
+#    这个函数将作为 .apply() 的参数，它会接收一个 'module' (模块/层)
+def init_normal(module):
+    
+    # 2. 检查这个模块的类型是否 *正好* 是 nn.Linear
+    #    (注意: nn.LazyLinear 也是 nn.Linear 的一种)
+    if type(module) == nn.Linear:
+        
+        # 3. 如果是线性层, 就地(in-place)初始化它的 'weight'
+        #    (带 _ 的函数表示 in-place 操作)
+        #    使用均值为 0、标准差为 0.01 的正态分布
+        nn.init.normal_(module.weight, mean=0, std=0.01)
+        
+        # 4. 就地(in-place)初始化它的 'bias' 为 0
+        nn.init.zeros_(module.bias)
+
+# 5. net.apply() 方法
+#    它会 *递归地* 遍历 'net' 及其所有子模块
+#    (包括 'net' 自身, 'net[0]', 'net[1]', 'net[2]')
+#    并对 *每一个* 模块调用 init_normal 函数
+net.apply(init_normal)
+
+# 6. 检查结果
+#    net[0] 是一个 nn.Linear, 所以它被 init_normal 函数处理了
+#    输出的权重(weight)是接近0的随机数 (符合 std=0.01)
+#    输出的偏置(bias)是 0.
+net[0].weight.data[0], net[0].bias.data[0]
+# (tensor([-0.0129, -0.0007, -0.0033, 0.0276]), tensor(0.))
+
+
+# 1. 定义一个自定义的初始化函数
+def init_constant(module):
+    
+    # 2. 检查这个模块的类型是否 *正好* 是 nn.Linear
+    if type(module) == nn.Linear:
+        
+        # 3. 如果是线性层, 就地(in-place)将其 'weight' 初始化为常数 1
+        nn.init.constant_(module.weight, 1)
+        
+        # 4. 就地(in-place)将其 'bias' 初始化为 0
+        nn.init.zeros_(module.bias)
+
+# 5. 将这个 init_constant 函数递归地应用到 net 的所有子模块上
+net.apply(init_constant)
+
+# 6. 检查结果
+#    net[0] 是 nn.Linear, 它被 init_constant 函数处理了
+#    输出的权重(weight)现在全是 1.0
+#    输出的偏置(bias)现在全是 0.0
+net[0].weight.data[0], net[0].bias.data[0]
+
+import torch.nn as nn
+
+# (假设 net 和 X 已经按之前的例子定义并运行过 net(X))
+
+# 1. 定义一个 Xavier 初始化函数
+def init_xavier(module):
+    # 检查模块是否为 nn.Linear
+    if type(module) == nn.Linear:
+        # 使用 Xavier 均匀分布 (Xavier uniform) 来初始化权重
+        nn.init.xavier_uniform_(module.weight)
+
+# 2. 定义一个"固定值 42"的初始化函数
+def init_42(module):
+    # 检查模块是否为 nn.Linear
+    if type(module) == nn.Linear:
+        # 使用常数 42 来初始化权重
+        nn.init.constant_(module.weight, 42)
+
+# 3. 对 *特定层* 应用初始化
+#    注意：这里调用的是 net[0].apply() 而不是 net.apply()
+#    这会将 init_xavier 函数 *只* 应用到 net[0] 这个模块上
+net[0].apply(init_xavier)
+
+#    同理, 这会将 init_42 函数 *只* 应用到 net[2] 这个模块上
+net[2].apply(init_42)
+
+# 4. 打印结果
+#    net[0] 的权重会被 Xavier 初始化 (值会比较小)
+print(net[0].weight.data[0])
+
+#    net[2] 的权重会被 42 初始化 (值会全是 42)
+print(net[2].weight.data)
+
+import torch.nn as nn
+
+# (假设 net 和 X 已经按之前的例子定义并运行过 net(X))
+
+# 1. 定义一个非常自定义的初始化函数
+def my_init(module):
+    
+    # 2. 检查是否为 nn.Linear
+    if type(module) == nn.Linear:
+        
+        # 3. 打印层的权重信息
+        #    (这是一个复杂的打印, 作用是打印出 'weight' 和它的 shape)
+        print("Init", *[(name, param.shape)
+                        for name, param in module.named_parameters()][0])
+
+        # 4. 初始化权重: -10 到 10 之间的均匀分布
+        nn.init.uniform_(module.weight, -10, 10)
+
+        # 5. 关键的后处理步骤 (使用布尔掩码)
+        # 5.a. (module.weight.data.abs() >= 5) 
+        #      这会创建一个布尔(True/False)张量,
+        #      绝对值 >= 5 的位置是 True (1), 小于 5 的位置是 False (0)
+        #
+        # 5.b. module.weight.data *= ...
+        #      将权重 *乘以* 这个 0/1 掩码。
+        #
+        # 结果: 绝对值小于 5 的权重都变成了 0.
+        module.weight.data *= module.weight.data.abs() >= 5
+
+# 6. 将这个自定义函数应用到所有模块
+net.apply(my_init)
+
+# 7. 检查 net[0] 的前两行权重
+#    你会看到所有非 0 值的绝对值都 >= 5
+net[0].weight[:2]
+
+#直接设置参数
+net[0].weight.data[:] += 1
+net[0].weight.data[0, 0] = 42
+net[0].weight.data[0]
+----------------------------------------------------------------------------------------------
+6.4 Lazy Initialization
+(1) 问题背景： (I) 我们之前在设置网络时很“草率”，例如，我们定义网络架构时没有指定输入维度。 (II) 尽管如此，我们的代码仍然可以运行。
+
+(2) “诀窍”是什么： (I) 框架采用了“延后初始化”（Defer Initialization）策略。 (II) 它会等待，直到模型第一次有数据（X）通过时。 (III) 此时，它会动态地（on the fly）推断每一层的参数（如权重）的具体尺寸。 (IV) 这个特性非常方便，尤其是在输入维度（如图像分辨率）可能影响后续层尺寸的情况下。
+
+# @d2l.add_to_class(d2l.Module) 是一个“装饰器”
+# 它的作用是将下面的 'apply_init' 函数添加为 'd2l.Module' 类的一个方法
+# #@save 是 D2L 书中的一个标记，表示该代码块会被保存以供后续章节重用
+@d2l.add_to_class(d2l.Module)
+def apply_init(self, inputs, init=None):
+    """
+    使用虚拟输入 `inputs` 来触发延后初始化，
+    并（可选地）应用一个自定义的 `init` 函数。
+    """
+    
+    # 1. 执行一次前向传播（“演习”）
+    #    self.forward(*inputs) 会用虚拟数据 `inputs` 调用模型
+    #    这会强制所有 LazyLinear 层根据 `inputs` 的形状来初始化它们的参数
+    #    *inputs 使用了“解包”语法
+    self.forward(*inputs)
+    
+    # 2. 检查用户是否提供了自定义的初始化函数
+    if init is not None:
+        
+        # 3. 如果提供了 init 函数, 就将其递归地应用到所有子模块
+        #    (这里假设模型的层都存储在 self.net 中)
+        self.net.apply(init)
+----------------------------------------------------------------------------------------------
+6.4.1 Summary
+(1) 延后初始化（Lazy initialization）非常方便。
+(2) 它允许框架自动推断参数的形状（shapes）。
+(3) 这使得修改网络架构变得容易，并消除了一种常见的错误来源。
+(4) 我们可以通过将数据传入模型一次（“演习”）来让框架最终初始化所有参数。
+----------------------------------------------------------------------------------------------
+6.5 Custom Layers
+import torch
+from torch import nn
+from torch.nn import functional as F
+from d2l import torch as d2l
+----------------------------------------------------------------------------------------------
+6.5.1 Layers without Parameters
+
+import torch.nn as nn
+# 定义一个自定义层，名为 "CenteredLayer" (中心化层)
+# 它继承自 nn.Module 基类
+class CenteredLayer(nn.Module):
+    
+    # 构造函数
+    def __init__(self):
+        # 必须先调用父类的构造函数
+        super().__init__()
+        # 注意：这个层不需要任何参数（权重或偏置），
+        # 所以 __init__ 方法里没有其他内容。
+
+    # 定义前向传播
+    def forward(self, X):
+        # 核心逻辑：
+        # 1. X.mean() 计算输入 X 的平均值
+        # 2. X - X.mean() 从 X 的每个元素中减去这个平均值
+        # 3. 返回 "中心化" 后的张量
+        return X - X.mean()
+
+layer = CenteredLayer()
+layer(torch.tensor([1.0, 2, 3, 4, 5])) #tensor([-2., -1., 0., 1., 2.])
+
+net = nn.Sequential(nn.LazyLinear(128), CenteredLayer())
+
+Y = net(torch.rand(4, 8))
+Y.mean()  #tensor(-6.5193e-09, grad_fn=<MeanBackward0>)
+----------------------------------------------------------------------------------------------
+6.5.2 Layers with Parameters
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+# 定义一个自定义的线性层，名为 "MyLinear"
+class MyLinear(nn.Module):
+    
+    # 构造函数，接收输入维度(in_units)和输出维度(units)
+    def __init__(self, in_units, units):
+        super().__init__()
+        
+        # 1. 手动创建“权重”参数
+        #    torch.randn(in_units, units) 创建一个随机张量
+        #    nn.Parameter(...) 将其“注册”为模型的可训练参数
+        self.weight = nn.Parameter(torch.randn(in_units, units))
+        
+        # 2. 手动创建“偏置”参数
+        #    并将其注册为可训练参数
+        self.bias = nn.Parameter(torch.randn(units,))
+
+    # 定义前向传播
+    def forward(self, X):
+        
+        # 3. 手动执行线性计算： Y = X @ W + b
+        #    torch.matmul(X, self.weight) 是矩阵乘法
+        #    (注意：代码中使用了 .data，这通常会阻止梯度计算，
+        #     更标准的写法是: torch.matmul(X, self.weight) + self.bias)
+        linear = torch.matmul(X, self.weight.data) + self.bias.data
+        
+        # 4. 应用 ReLU 激活函数并返回
+        return F.relu(linear)
+
+linear = MyLinear(5, 3)
+linear.weight
+linear(torch.rand(2, 5))
+
+net = nn.Sequential(MyLinear(64, 8), MyLinear(8, 1))
+net(torch.rand(2, 64))
+----------------------------------------------------------------------------------------------
+6.5.3 Summary
+我们可以通过基础层类设计自定义层。这使得我们能够定义灵活的新层，其行为与库中任何现有层均不相同。一旦定义完成，自定义层便可在任意上下文和架构中被调用。层可以拥有局部参数，这些参数可以通过内置函数创建。
+----------------------------------------------------------------------------------------------
+6.6 File I/O
+import torch
+from torch import nn
+from torch.nn import functional as F
+----------------------------------------------------------------------------------------------
+6.6.1 Loading and Saving Tensors
+import torch
+# --- 1. 保存和加载单个张量 ---
+
+# 创建一个张量 x = [0, 1, 2, 3]
+x = torch.arange(4)
+
+# 使用 torch.save() 将张量 x 保存到名为 'x-file' 的文件中
+torch.save(x, 'x-file')
+
+# 使用 torch.load() 从 'x-file' 文件中加载数据
+x2 = torch.load('x-file')
+
+# 验证 x2 的内容
+print(f"x2: {x2}")
+# x2: tensor([0, 1, 2, 3])
+# --- 2. 保存和加载张量列表 ---
+
+# 创建张量 y = [0., 0., 0., 0.]
+y = torch.zeros(4)
+
+# 将 x 和 y 放入一个 Python 列表 [x, y] 中
+# 将这个 *列表* 保存到名为 'x-files' 的文件中
+torch.save([x, y], 'x-files')
+
+# 从 'x-files' 加载数据, 它会返回保存时的那个列表 [x, y]
+# 我们可以使用 Python 的 "解包" 语法直接将其赋给 x2 和 y2
+x2, y2 = torch.load('x-files')
+
+# 验证 x2 和 y2 的内容
+print(f"x2, y2: {(x2, y2)}")
+# x2, y2: (tensor([0, 1, 2, 3]), tensor([0., 0., 0., 0.]))
+# --- 3. 保存和加载张量字典 ---
+
+# 创建一个字典, 键是字符串 'x' 和 'y'
+mydict = {'x': x, 'y': y}
+
+# 将 *整个字典* 保存到名为 'mydict' 的文件中
+torch.save(mydict, 'mydict')
+
+# 从 'mydict' 加载数据, 它会返回保存时的那个字典
+mydict2 = torch.load('mydict')
+
+# 验证字典的内容
+print(f"mydict2: {mydict2}")
+# mydict2: {'x': tensor([0, 1, 2, 3]), 'y': tensor([0., 0., 0., 0.])}
+----------------------------------------------------------------------------------------------
+6.6.2 Loading and Saving Model Parameters
+class MLP(nn.Module):
+	def __init__(self):
+		super().__init__()
+		self.hidden = nn.LazyLinear(256)
+		self.output = nn.LazyLinear(10)
+	def forward(self, x):
+		return self.output(F.relu(self.hidden(x)))
+net = MLP()
+X = torch.randn(size=(2, 20))
+Y = net(X)
+
+# (假设 MLP 类已经定义, net = MLP() 也已经实例化)
+# net = MLP()
+# (假设 net 已经训练过，或者至少用数据跑过一次以初始化 LazyLinear)
+# X = torch.rand(2, 20)
+# net(X)
+
+# --- 1. 保存模型参数 ---
+# net.state_dict() 会返回一个包含所有参数的“状态字典”
+# (例如 {'hidden.weight': tensor(...), 'hidden.bias': tensor(...), ...})
+# torch.save() 将这个字典保存到文件 'mlp.params'
+torch.save(net.state_dict(), 'mlp.params')
+
+
+# --- 2. 恢复（加载）模型参数 ---
+# (I) 创建一个新的、未经训练的 MLP 实例
+#     它现在的参数是随机初始化的
+clone = MLP()
+# (II) 加载参数
+#     A. torch.load('mlp.params') 从文件中加载“状态字典”
+#     B. clone.load_state_dict(...) 将加载的参数“覆盖”到 clone 模型中
+clone.load_state_dict(torch.load('mlp.params'))
+# (III) 将模型设置为“评估模式”
+#      这会关闭 Dropout 和 BatchNorm 等层（如果存在的话）
+clone.eval()
+
+Y_clone = clone(X)
+Y_clone == Y #tensor (True...)
+----------------------------------------------------------------------------------------------
+6.6.3 Summary
+保存和加载功能可用于对张量对象执行文件输入/输出操作。我们可以通过参数字典来保存和加载网络的整套参数。而保存网络结构则需通过代码实现，而非参数本身。
+----------------------------------------------------------------------------------------------
+6.7 GPUs
+import torch
+from torch import nn
+from d2l import torch as d2l
+----------------------------------------------------------------------------------------------
+6.7.1 Computing Devices
+import torch
+
+# D2L 书中的 #@save 标记，表示这个函数会被保存以供重用
+
+def cpu(): #@save
+    """获取 CPU 设备。"""
+    # torch.device('cpu') 创建一个代表 CPU 的设备对象
+    return torch.device('cpu')
+
+def gpu(i=0): #@save
+    """获取一个 GPU 设备。"""
+    # f'cuda:{i}' 是一个格式化字符串
+    # i=0 默认指向 'cuda:0' (第一块 GPU)
+    # i=1 指向 'cuda:1' (第二块 GPU)，以此类推
+    return torch.device(f'cuda:{i}')
+
+# --- 调用这些函数 ---
+
+# (1) 调用 cpu()
+c = cpu()
+# c 的值是: device(type='cpu')
+
+# (2) 调用 gpu() (使用默认参数 i=0)
+g0 = gpu()
+# g0 的值是: device(type='cuda', index=0)
+
+# (3) 调用 gpu(1) (指定 i=1)
+g1 = gpu(1)
+# g1 的值是: device(type='cuda', index=1)
+
+print(f"CPU: {c}")
+print(f"默认 GPU: {g0}")
+print(f"第二块 GPU: {g1}")
+
+# (注意：如果你的电脑没有安装 NVIDIA GPU 或 CUDA, 
+#  调用 gpu() 可能会报错)
+
+def num_gpus(): #@save
+	"""Get the number of available GPUs."""
+	return torch.cuda.device_count()
+print(num_gpus()) #2
+
+import torch
+
+# --- 假设这些辅助函数已经定义 ---
+# (num_gpus() 返回你电脑上可用 GPU 的数量, 比如 torch.cuda.device_count())
+# (gpu(i) 返回 'cuda:i' 设备)
+# (cpu() 返回 'cpu' 设备)
+
+def try_gpu(i=0):
+    """
+    尝试获取 gpu(i)，如果它存在的话；
+    否则，返回 cpu()。
+    """
+    # 检查 GPU 数量是否 >= i + 1 (例如, i=0 时, 检查是否有 >= 1 块 GPU)
+    if num_gpus() >= i + 1:
+        # 如果 GPU 存在, 返回该 GPU 设备
+        return gpu(i)
+    
+    # 如果 GPU 不存在, 返回 CPU 设备
+    return cpu()
+
+def try_all_gpus():
+    """
+    返回一个包含所有可用 GPU 的列表；
+    如果一块 GPU 都没有, 返回一个空列表。
+    (注意：D2L 的 docstring 说 "or [cpu(),]"，但代码实现是返回 '[]')
+    """
+    # 使用列表推导式, 遍历 0 到 (num_gpus - 1)
+    # 为每个存在的 GPU 创建一个设备对象
+    return [gpu(i) for i in range(num_gpus())]
+
+# --- 调用这些函数 ---
+
+# (1) try_gpu(): 
+#     尝试获取第 0 块 GPU (i=0)。
+#     如果电脑有 GPU, 这会返回 gpu(0)。
+#     如果电脑没有 GPU, 这会返回 cpu()。
+a = try_gpu()
+
+# (2) try_gpu(10):
+#     尝试获取第 10 块 GPU (i=10)。
+#     (除非你用的是超级计算机) 几乎可以肯定这块 GPU 不存在。
+#     因此, 这几乎总会返回 cpu()。
+b = try_gpu(10)
+
+# (3) try_all_gpus():
+#     返回一个包含你所有 GPU 设备的列表。
+#     例如, 如果你有 2 块 GPU, 它会返回 [gpu(0), gpu(1)]。
+#     如果你没有 GPU, 它会返回 [] (空列表)。
+c = try_all_gpus()
+
+print(f"try_gpu(): {a}")
+print(f"try_gpu(10): {b}")
+print(f"try_all_gpus(): {c}")
+----------------------------------------------------------------------------------------------
+6.7.2 Tensors and GPUs
+
+x = torch.tensor([1, 2, 3])
+x.device #device(type='cpu'),默认在cpu上
+
+X = torch.ones(2, 3, device=try_gpu())
+X   #tensor([[1., 1., 1.],
+		    [1., 1., 1.]], device='cuda:0'）
+
+
+
+
+
+
+
+
+

@@ -835,7 +835,7 @@ class Inception(nn.Module):
         \--- (A) **全局平均池化**：将高宽变为 $1 \times 1$。
         \--- (B) **Flatten**：展平为向量。
         \--- (C) **全连接层**：输出类别数 (num\_classes)。
-![GoogLeNet Model](98baad27d775e908a2f6fee902bfa76.png)
+![GoogLeNet Model](png/98baad27d775e908a2f6fee902bfa76.png)
 3.  **代码实现 (GoogLeNet Class)**
     这是一个组合所有模块的完整实现。注意：为了适应 Fashion-MNIST 训练，这里稍作修改，将输入高宽从 224 减小到 96。
 
